@@ -10,7 +10,7 @@ Cargo workspace. The root package is the app binary; libraries live in `crates/`
 | Crate | Role | May depend on |
 |---|---|---|
 | `crates/diff-stack` | Pure: align a chain of text versions, label each line with the versions it lives in, group into hunks. | `imara-diff`, std. No git, no UI, no I/O. |
-| `crates/repo` (planned) | Talks to git: merge-base, changed files, file contents at B / HEAD / index / worktree, untracked files. | std, process |
+| `crates/repo` | Talks to git: merge-base, changed files, file contents at B / HEAD / index / worktree, untracked files. | std, process |
 | root (`src/`) | Rune UI and glue. Syntax colours come from `rune_kit::syntax` (no separate highlight crate). | everything above, `rune`, `rune-kit` |
 
 Keep these boundaries. Pure crates stay pure so they can be tested without a repo or a window.
