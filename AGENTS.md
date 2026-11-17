@@ -33,13 +33,17 @@ Debug builds accept Rune's agent tooling flags, so check every UI change by look
 ```sh
 cargo build
 B=target/debug/git-viewer-rune
-$B --snap target/snaps/x.png [--theme dark|light] [--size 1400x900] [--scale 2]
+$B --snap target/snaps/x.png --chrome [--theme dark|light] [--size 1400x900] [--scale 2]
 $B --tree target/snaps/x.json        # element tree: key, role, label, text, rects, colours
 $B --script scripts/ui/<name>.json --out target/snaps/<name>/   # scripted input -> frames
 ```
 
 Scripts are timestamped JSON events (`tap`/`move`/`scroll`/`key`/`type`, at `x,y` or an element
-`key`); see "Agent tooling" in Rune's README. Give interactive elements stable `.key(..)`s so
+`key`); see "Agent tooling" in Rune's README. Always pass `--chrome` to snapshots: it paints the macOS traffic lights onto the image and prints
+`rune: chrome: ... overlaps the traffic lights` for any element under them. That warning is a bug
+(content sits under a transparent titlebar), never something to ignore.
+
+Give interactive elements stable `.key(..)`s so
 scripts and `--tree` can target them. Keep generated images under `target/`, never commit them.
 
 ## Rules
