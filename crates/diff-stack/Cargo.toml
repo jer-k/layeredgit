@@ -1,0 +1,16 @@
+[package]
+name = "diff-stack"
+version = "0.1.0"
+description = "Aligns a chain of text versions and labels each line with the versions it lives in."
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+imara-diff = { version = "0.2.0", default-features = false }
+
+[dev-dependencies]
+proptest = { version = "1.12.0", default-features = false, features = ["std"] }
