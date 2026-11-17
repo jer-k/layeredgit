@@ -1072,8 +1072,10 @@ name = "git-viewer-rune"
 version = "0.1.0"
 dependencies = [
  "diff-stack",
+ "repo",
  "rune",
  "rune-kit",
+ "tempfile",
 ]
 
 [[package]]

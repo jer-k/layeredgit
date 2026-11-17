@@ -6,6 +6,7 @@ use rune::{
 use rune_kit::{Kit, syntax::SyntaxTheme};
 
 use crate::{
+    input::ChangeKind,
     model::{Counts, FileBody, FileDiff, Line, RowKind},
     state::{HEADER_HEIGHT, State},
 };
@@ -99,7 +100,7 @@ impl DiffLook {
         let collapsed = state.collapsed.contains(&entry.file);
         match &entry.kind {
             RowKind::Header => file_header(entry.file, file, collapsed, false, &self.kit),
-            RowKind::Hunk(label) => self.hunk(label),
+            RowKind::Hunk { label, .. } => self.hunk(label),
             RowKind::Line(number) => {
                 if let FileBody::Text(diff) = &file.body
                     && let Some(line) = diff.lines.get(*number)
@@ -358,9 +359,21 @@ fn file_header(index: usize, file: &FileDiff, collapsed: bool, sticky: bool, kit
                 .truncate_middle()
                 .help_when_truncated(path),
         )
-        .child(counts("Committed", &file.committed_counts, false, kit))
+        .child(counts(
+            "Committed",
+            file.committed,
+            &file.committed_counts,
+            false,
+            kit,
+        ))
         .child(el().size(1.0, 15.0).fill(c.border_muted))
-        .child(counts("Uncommitted", &file.uncommitted_counts, true, kit))
+        .child(counts(
+            "Uncommitted",
+            file.uncommitted,
+            &file.uncommitted_counts,
+            true,
+            kit,
+        ))
         .on_press_tx(move |state: &mut State, tx| state.toggle_file(index, tx));
     if sticky {
         header.box_shadow(Shadow {
@@ -374,23 +387,49 @@ fn file_header(index: usize, file: &FileDiff, collapsed: bool, sticky: bool, kit
     }
 }
 
-fn counts(label: &'static str, counts: &Counts, working: bool, kit: &Kit) -> El {
+fn counts(
+    label: &'static str,
+    change: ChangeKind,
+    counts: &Counts,
+    working: bool,
+    kit: &Kit,
+) -> El {
     let c = &kit.c;
     let stat = |value, mark, ink| {
         text(format!("{mark}{value}"))
             .font(kit.ty.mono)
             .color(if value == 0 { c.text_muted } else { ink })
     };
-    row()
+    let summary = row()
         .items_center()
         .gap(6.0)
-        .child(if working { dot(kit, 4.0) } else { el() })
+        .child(if working && change != ChangeKind::Unchanged {
+            dot(kit, 4.0)
+        } else {
+            el()
+        })
         .child(
             text(label)
                 .font(kit.ty.text_xsmall)
                 .color(c.text_muted)
                 .single_line(),
+        );
+    let change_label = match change {
+        ChangeKind::Unchanged => "",
+        ChangeKind::Modified => "Modified",
+        ChangeKind::Added => "Added",
+        ChangeKind::Deleted => "Deleted",
+        ChangeKind::Renamed => "Renamed",
+    };
+    if counts.added == 0 && counts.removed == 0 && change != ChangeKind::Unchanged {
+        summary.child(
+            text(change_label)
+                .font(kit.ty.text_xsmall_medium)
+                .color(c.text_base),
         )
-        .child(stat(counts.added, "+", c.success.fg))
-        .child(stat(counts.removed, "−", c.danger.fg))
+    } else {
+        summary
+            .child(stat(counts.added, "+", c.success.fg))
+            .child(stat(counts.removed, "−", c.danger.fg))
+    }
 }

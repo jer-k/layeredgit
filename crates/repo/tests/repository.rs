@@ -143,6 +143,20 @@ fn file<'a>(files: &'a [ChangedFile], path: &str) -> &'a ChangedFile {
         .unwrap()
 }
 
+test_case!(head_name_for_a_branch_or_detached_commit, {
+    let fixture = Fixture::new();
+    let repo = fixture.open();
+    assert_eq!(repo.head_name().unwrap(), "main");
+    fixture.git(&["commit", "--allow-empty", "-m", "base"]);
+    fixture.git(&["switch", "-c", "feature/nested"]);
+    assert_eq!(repo.head_name().unwrap(), "feature/nested");
+    fixture.git(&["switch", "--detach"]);
+    assert_eq!(
+        repo.head_name().unwrap(),
+        OsStr::new(&fixture.git(&["rev-parse", "--short", "HEAD"]))
+    );
+});
+
 test_case!(joins_committed_and_uncommitted_edits, {
     let fixture = Fixture::new();
     for path in ["committed", "working", "both", "deleted"] {

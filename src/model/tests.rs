@@ -90,7 +90,7 @@ fn filtering_preserves_context_and_three_lines_around_changes() {
     let rows = rows(&review, Filter::Uncommitted);
     assert!(
         rows.rows.iter().any(|row| row.file == 1
-            && matches!(row.kind, RowKind::Placeholder("No uncommitted changes")))
+            && matches!(&row.kind, RowKind::Placeholder(message) if message == "No uncommitted changes"))
     );
 }
 
@@ -141,9 +141,8 @@ fn added_deleted_renamed_and_binary_files_keep_their_review_metadata() {
         assert!(diff.newlines.is_empty());
     }
     let rows = rows(&review, Filter::All);
-    assert!(rows.rows.iter().any(
-        |row| row.file == 6 && matches!(row.kind, RowKind::Placeholder("Binary file changed"))
-    ));
+    assert!(rows.rows.iter().any(|row| row.file == 6
+        && matches!(&row.kind, RowKind::Placeholder(message) if message == "Binary file")));
 }
 
 #[test]
@@ -272,7 +271,7 @@ fn text_file(texts: [&str; 3]) -> InputFile {
         base,
         head,
         worktree,
-        binary: false,
+        placeholder: None,
         committed: ChangeKind::Modified,
         uncommitted: ChangeKind::Modified,
     }

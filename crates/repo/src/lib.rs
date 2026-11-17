@@ -311,6 +311,25 @@ impl Repo {
         Err(Error::NoDefaultBase)
     }
 
+    /// Returns the checked-out branch name, or Git's short object ID for a detached HEAD.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if Git cannot resolve HEAD.
+    pub fn head_name(&self) -> Result<OsString, Error> {
+        if let Some(name) = self.symbolic_ref("HEAD")? {
+            let full = name.as_bytes();
+            return Ok(OsString::from_vec(
+                full.strip_prefix(b"refs/heads/").unwrap_or(full).to_vec(),
+            ));
+        }
+        let operation = "rev-parse --short HEAD";
+        let output = git::run(command(&self.root).args(["rev-parse", "--short", "HEAD"]))?;
+        Ok(OsString::from_vec(
+            single_line(&success(output, operation)?, operation)?.to_vec(),
+        ))
+    }
+
     /// Resolves the supplied base ref (or the default) and computes its merge-base
     /// with HEAD. For an unborn HEAD, both endpoints are empty.
     ///

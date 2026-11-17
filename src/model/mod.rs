@@ -3,14 +3,18 @@
 mod highlighting;
 mod rows;
 
-use std::ops::Range;
+use std::{
+    borrow::Cow,
+    ops::Range,
+    path::{Path, PathBuf},
+};
 
 use diff_stack::{DisplayLine, Stack, ThreeWayChange, align};
 use rune_kit::syntax::Highlight;
 
-use crate::input::{ChangeKind, FileVersion, InputFile, ReviewInput};
+use crate::input::{ChangeKind, FileVersion, InputFile, Placeholder, ReviewInput};
 
-pub(crate) use rows::{ReviewRows, RowKind};
+pub(crate) use rows::{ReviewRow, ReviewRows, RowKind};
 
 const BASE: usize = 0;
 const HEAD: usize = 1;
@@ -64,6 +68,7 @@ impl Filter {
 }
 
 /// An owned alignment and syntax cache for a branch review.
+#[derive(Default)]
 pub(crate) struct Review {
     pub(crate) base_label: String,
     pub(crate) head_label: String,
@@ -88,7 +93,7 @@ pub(crate) struct Counts {
 }
 
 pub(crate) struct FileDiff {
-    paths: [Option<String>; 3],
+    paths: [Option<PathBuf>; 3],
     pub(crate) committed: ChangeKind,
     pub(crate) uncommitted: ChangeKind,
     pub(crate) committed_counts: Counts,
@@ -98,8 +103,7 @@ pub(crate) struct FileDiff {
 
 pub(crate) enum FileBody {
     Text(TextDiff),
-    Binary,
-    TooLarge,
+    Placeholder(Placeholder),
 }
 
 pub(crate) struct TextDiff {
@@ -127,14 +131,17 @@ struct Newline {
 impl FileDiff {
     fn new(input: InputFile) -> Self {
         let versions = [input.base, input.head, input.worktree];
-        let body = if input.binary {
-            FileBody::Binary
+        let body = if let Some(reason) = input.placeholder {
+            FileBody::Placeholder(reason)
         } else {
-            TextDiff::new(&versions).map_or(FileBody::TooLarge, FileBody::Text)
+            TextDiff::new(&versions).map_or(
+                FileBody::Placeholder(Placeholder::TooManyLines),
+                FileBody::Text,
+            )
         };
         let (committed_counts, uncommitted_counts) = match &body {
             FileBody::Text(diff) => counts(&diff.lines),
-            _ => (Counts::default(), Counts::default()),
+            FileBody::Placeholder(_) => (Counts::default(), Counts::default()),
         };
         Self {
             paths: versions.map(|version| version.map(|v| v.path)),
@@ -147,24 +154,60 @@ impl FileDiff {
     }
 
     /// The most recent path, including the former path for a deleted file.
-    pub(crate) fn path(&self) -> &str {
-        self.paths
+    pub(crate) fn path(&self) -> Cow<'_, str> {
+        self.paths()
+            .next_back()
+            .map_or(Cow::Borrowed(""), Path::to_string_lossy)
+    }
+
+    /// Paths in version order, for matching files across refreshes.
+    pub(crate) fn paths(&self) -> impl DoubleEndedIterator<Item = &Path> {
+        self.paths.iter().filter_map(Option::as_deref)
+    }
+
+    /// Finds the old display line in this file, with its index as a fallback.
+    pub(crate) fn relocated_line(&self, old: &Self, index: usize) -> Option<usize> {
+        let (FileBody::Text(before), FileBody::Text(after)) = (&old.body, &self.body) else {
+            return None;
+        };
+        let anchor = before.lines.get(index)?;
+        let rank = |(i, line): (usize, &Line)| {
+            (
+                line.text != anchor.text,
+                line.base != anchor.base,
+                line.head != anchor.head,
+                line.change != anchor.change,
+                i.abs_diff(index),
+            )
+        };
+        if after
+            .lines
+            .get(index)
+            .is_some_and(|line| rank((index, line)) == (false, false, false, false, 0))
+        {
+            return Some(index);
+        }
+        after
+            .lines
             .iter()
-            .rev()
-            .flatten()
-            .next()
-            .map_or("", String::as_str)
+            .enumerate()
+            .min_by_key(|&(i, line)| rank((i, line)))
+            .map(|(i, _)| i)
     }
 
     /// The distinct paths in version order, keeping a rename that was reversed.
     pub(crate) fn path_label(&self) -> String {
-        let mut paths: Vec<&str> = Vec::with_capacity(self.paths.len());
-        for path in self.paths.iter().flatten().map(String::as_str) {
+        let mut paths = Vec::with_capacity(self.paths.len());
+        for path in self.paths() {
             if paths.last().copied() != Some(path) {
                 paths.push(path);
             }
         }
-        paths.join(" → ")
+        paths
+            .into_iter()
+            .map(Path::to_string_lossy)
+            .collect::<Vec<_>>()
+            .join(" → ")
     }
 
     fn has_changes(&self, filter: Filter) -> bool {
@@ -214,6 +257,20 @@ impl TextDiff {
             Filter::Committed => &self.hunks[1],
             Filter::Uncommitted => &self.hunks[2],
         }
+    }
+
+    /// Unchanged ranges which can be expanded in this filter.
+    pub(crate) fn gaps(&self, filter: Filter) -> impl Iterator<Item = Range<usize>> {
+        let hunks = self.hunks(filter);
+        let starts = std::iter::once(0).chain(hunks.iter().map(|hunk| hunk.end));
+        let ends = hunks
+            .iter()
+            .map(|hunk| hunk.start)
+            .chain(std::iter::once(self.lines.len()));
+        starts
+            .zip(ends)
+            .map(|(start, end)| start..end)
+            .filter(move |gap| !hunks.is_empty() && !gap.is_empty())
     }
 }
 

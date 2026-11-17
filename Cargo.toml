@@ -33,6 +33,7 @@ workspace = true
 
 [dependencies]
 diff-stack = { version = "0.1.0", path = "crates/diff-stack" }
+repo = { version = "0.1.0", path = "crates/repo" }
 rune = { git = "https://github.com/anomalyco/rune", rev = "10a39584cc1ff739477be52e333a742a024ac956" }
 rune-kit = { git = "https://github.com/anomalyco/rune", rev = "10a39584cc1ff739477be52e333a742a024ac956", version = "0.0.1" }
 
@@ -43,3 +44,6 @@ winit = { git = "https://github.com/anomalyco/rune", rev = "10a39584cc1ff739477b
 parley_engine = { git = "https://github.com/anomalyco/rune", rev = "10a39584cc1ff739477be52e333a742a024ac956" }
 accesskit_windows = { git = "https://github.com/anomalyco/rune", rev = "10a39584cc1ff739477be52e333a742a024ac956" }
 accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "10a39584cc1ff739477be52e333a742a024ac956" }
+
+[dev-dependencies]
+tempfile = "3.27.0"

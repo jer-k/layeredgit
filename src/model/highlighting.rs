@@ -26,7 +26,10 @@ impl VersionInk {
 
         Self {
             lines,
-            highlights: syntax::highlight(syntax::lang_for_path(&version.path), text),
+            highlights: syntax::highlight(
+                syntax::lang_for_path(&version.path.to_string_lossy()),
+                text,
+            ),
         }
     }
 
