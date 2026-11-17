@@ -1,0 +1,6 @@
+{
+  "events": [
+    {"t": 0.12, "type": "tap", "key": "filter/uncommitted"},
+    {"t": 0.62, "type": "tap", "key": "filter/committed"}
+  ]
+}
