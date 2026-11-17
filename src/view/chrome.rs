@@ -5,7 +5,7 @@ use rune_kit::Kit;
 use crate::{
     input::ChangeKind,
     model::{FileDiff, Filter},
-    state::State,
+    state::{State, Status},
 };
 
 use super::theme::{Provenance, accent_surface, dot};
@@ -40,16 +40,7 @@ pub(super) fn toolbar(state: &State, kit: &Kit) -> El {
                 .color(c.text_base)
                 .single_line(),
         );
-    let branches = row()
-        .key("comparison")
-        .items_center()
-        .gap(9.0)
-        .min_w(0.0)
-        .child(branch("Base", &state.review.base_label, false, kit))
-        .child(text("→").font(kit.ty.ui).color(c.text_muted))
-        .child(branch("HEAD", &state.review.head_label, true, kit));
-
-    row()
+    let toolbar = row()
         .key("toolbar")
         .h(68.0)
         .px(24.0)
@@ -57,11 +48,24 @@ pub(super) fn toolbar(state: &State, kit: &Kit) -> El {
         .gap(20.0)
         .fill(c.bg_base)
         .border_sides([0.0, 0.0, 1.0, 0.0], c.border_muted)
-        .child(title)
-        .child(el().size(1.0, 24.0).fill(c.border_muted))
-        .child(branches)
-        .child(el().grow(1.0))
-        .child(filters(state.filter, kit))
+        .child(title);
+    if matches!(&state.status, Status::Ready { .. }) {
+        let branches = row()
+            .key("comparison")
+            .items_center()
+            .gap(9.0)
+            .min_w(0.0)
+            .child(branch("Base", &state.review.base_label, false, kit))
+            .child(text("→").font(kit.ty.ui).color(c.text_muted))
+            .child(branch("HEAD", &state.review.head_label, true, kit));
+        toolbar
+            .child(el().size(1.0, 24.0).fill(c.border_muted))
+            .child(branches)
+            .child(el().grow(1.0))
+            .child(filters(state.filter, kit))
+    } else {
+        toolbar
+    }
 }
 
 fn branch(label: &'static str, name: &str, head: bool, kit: &Kit) -> El {
@@ -247,13 +251,13 @@ pub(super) fn sidebar(state: &State, kit: &Kit) -> El {
                 })
                 .child(list),
         )
-        .child(shortcuts(kit))
+        .child(shortcuts(kit, state.can_refresh()))
 }
 
 fn file_item(index: usize, file: &FileDiff, selected: bool, kit: &Kit) -> El {
     let c = &kit.c;
     let path = file.path();
-    let (directory, name) = path.rsplit_once('/').unwrap_or(("", path));
+    let (directory, name) = path.rsplit_once('/').unwrap_or(("", &path));
     let mut title = col().grow(1.0).min_w(0.0).gap(2.0).child(
         text(name)
             .font(kit.ty.ui_medium)
@@ -286,7 +290,7 @@ fn file_item(index: usize, file: &FileDiff, selected: bool, kit: &Kit) -> El {
         .label(if selected {
             format!("{path}, in view")
         } else {
-            path.to_owned()
+            path.into_owned()
         })
         .focusable(true)
         .h(46.0)
@@ -332,13 +336,13 @@ fn file_item(index: usize, file: &FileDiff, selected: bool, kit: &Kit) -> El {
         .on_press_tx(move |state: &mut State, tx| state.jump_to_file(index, tx))
 }
 
-fn shortcuts(kit: &Kit) -> El {
+fn shortcuts(kit: &Kit, can_refresh: bool) -> El {
     let c = &kit.c;
-    let pair = |keys: [&str; 2], label: &str| {
+    let shortcut = |keys: &[&str], label: &str| {
         row()
             .items_center()
             .gap(4.0)
-            .children(keys.map(|key| {
+            .children(keys.iter().map(|&key| {
                 el().size(17.0, 18.0)
                     .center()
                     .radius(kit.radius.sm)
@@ -353,13 +357,18 @@ fn shortcuts(kit: &Kit) -> El {
                     .pl(2.0),
             )
     };
-    row()
+    let list = row()
         .key("shortcuts")
         .h(43.0)
         .px(19.0)
-        .gap(15.0)
+        .gap(12.0)
         .items_center()
         .border_sides([1.0, 0.0, 0.0, 0.0], c.border_muted)
-        .child(pair(["j", "k"], "Hunks"))
-        .child(pair(["[", "]"], "Files"))
+        .child(shortcut(&["j", "k"], "Hunks"))
+        .child(shortcut(&["[", "]"], "Files"));
+    if can_refresh {
+        list.child(shortcut(&["r"], "Refresh"))
+    } else {
+        list
+    }
 }

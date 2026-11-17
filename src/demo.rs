@@ -2,7 +2,7 @@
 
 use std::fmt::Write as _;
 
-use crate::input::{ChangeKind, FileVersion, InputFile, ReviewInput};
+use crate::input::{ChangeKind, FileVersion, InputFile, Placeholder, ReviewInput};
 
 use ChangeKind::{Added, Deleted, Modified, Renamed, Unchanged};
 
@@ -90,7 +90,7 @@ fn file(path: &str, texts: [Option<&str>; 3], layers: [ChangeKind; 2]) -> InputF
         base,
         head,
         worktree,
-        binary: false,
+        placeholder: None,
         committed,
         uncommitted,
     }
@@ -156,7 +156,7 @@ fn renamed_markdown() -> InputFile {
         base: Some(version("docs/review-notes.md", Some(before))),
         head: Some(version("docs/review-guide.md", Some(after))),
         worktree: Some(version("docs/review-guide.md", Some(after))),
-        binary: false,
+        placeholder: None,
         committed: Renamed,
         uncommitted: Unchanged,
     }
@@ -168,7 +168,7 @@ fn binary() -> InputFile {
         base: version(),
         head: version(),
         worktree: version(),
-        binary: true,
+        placeholder: Some(Placeholder::Binary),
         committed: Unchanged,
         uncommitted: Modified,
     }

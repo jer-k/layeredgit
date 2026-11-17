@@ -1,4 +1,4 @@
-use std::{collections::HashSet, ops::Range};
+use std::{borrow::Cow, collections::HashSet, ops::Range};
 
 use super::{BASE, FileBody, FileDiff, Filter, HEAD, Line, Review, TextDiff, WORKTREE};
 
@@ -18,11 +18,11 @@ pub(crate) struct ReviewRow {
 
 pub(crate) enum RowKind {
     Header,
-    Hunk(String),
+    Hunk { start: usize, label: String },
     Line(usize),
     Fold(Range<usize>),
     Newline(&'static str),
-    Placeholder(&'static str),
+    Placeholder(Cow<'static, str>),
     Space,
 }
 
@@ -57,14 +57,13 @@ impl ReviewRows {
                 self.text_rows(index, diff, filter, expanded);
                 return;
             }
-            _ if !file.has_changes(filter) => match filter {
+            _ if !file.has_changes(filter) => Cow::Borrowed(match filter {
                 Filter::All => "No changes",
                 Filter::Committed => "No committed changes",
                 Filter::Uncommitted => "No uncommitted changes",
-            },
-            FileBody::Binary => "Binary file changed",
-            FileBody::TooLarge => "File exceeds the text diff line limit",
-            FileBody::Text(_) => "No textual changes",
+            }),
+            FileBody::Placeholder(reason) => reason.message(),
+            FileBody::Text(_) => Cow::Borrowed("No textual changes"),
         };
         self.push(
             index,
@@ -87,7 +86,10 @@ impl ReviewRows {
             self.push(
                 file,
                 format!("hunk/{file}/{}", hunk.start),
-                RowKind::Hunk(hunk_label(&diff.lines, hunk.clone())),
+                RowKind::Hunk {
+                    start: hunk.start,
+                    label: hunk_label(&diff.lines, hunk.clone()),
+                },
             );
             self.lines(file, diff, filter, hunk.clone());
             end = hunk.end;
