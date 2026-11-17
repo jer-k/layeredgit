@@ -1,25 +1,26 @@
-//! Native app for reviewing a branch against its base, GitHub-PR style.
+//! Native app for reviewing a branch and its working tree.
 
-use rune::{AppSpec, Cx, El, col, text, tok};
+mod demo;
+mod input;
+mod model;
+mod state;
+mod view;
 
-#[derive(Default)]
-struct State;
+use rune::AppSpec;
 
-fn view(_: &State, cx: &mut Cx<State>) -> El {
-    let theme = tok::theme(cx.env().system_dark);
-    col()
-        .w_full()
-        .h_full()
-        .center()
-        .fill(theme.bg)
-        .child(text("Git Viewer").color(theme.text))
-}
+use state::State;
 
 fn main() {
-    rune::run(AppSpec::new(
-        "Git Viewer",
-        (1000.0, 700.0),
-        State::default,
-        view,
-    ));
+    rune::run(AppSpec {
+        on_key: Some(State::key),
+        poll: Some(State::reveal_sidebar),
+        families: ("Inter", "ui-monospace"),
+        min_size: Some((920.0, 480.0)),
+        ..AppSpec::new(
+            "Git Viewer",
+            (1240.0, 820.0),
+            || State::new(demo::review()),
+            view::review,
+        )
+    });
 }
