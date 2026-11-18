@@ -52,6 +52,10 @@ pub(super) fn render(state: &State, side: Side, kit: &Kit, layer: &mut Vec<El>) 
         }
     })
     .build(kit, layer)
+    // The popover's trigger wrapper sizes to its content; let it shrink so long
+    // names truncate inside the chip instead of running under the filters.
+    .shrink()
+    .min_w(0.0)
 }
 
 fn trigger(key: &'static str, name: &str, side: Side, kit: &Kit) -> El {
