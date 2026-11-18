@@ -59,7 +59,10 @@ fn fresh_lines(old: &Review, new: &Review, files: &[Option<usize>]) -> FreshLine
                 Some(file) if file.paths.get(super::WORKTREE).is_some_and(Option::is_some) => {
                     file.worktree_text.as_deref()?
                 }
-                _ => "",
+                Some(_) => "",
+                // Absent from the previous review means the file was clean, so its
+                // working text matched HEAD. Only a file new to HEAD starts empty.
+                None => after.head_text.as_deref().unwrap_or(""),
             };
             if before == worktree {
                 return None;

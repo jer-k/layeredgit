@@ -363,3 +363,52 @@ fn text_file(texts: [&str; 3]) -> InputFile {
         uncommitted: ChangeKind::Modified,
     }
 }
+
+#[test]
+fn editing_a_clean_file_pulses_only_the_edited_line() {
+    let head = (1..=20)
+        .map(|n| format!("line {n}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    let edited = head.replace("line 7\n", "line seven\n");
+    let clean = |worktree: &str, uncommitted| InputFile {
+        base: Some(FileVersion {
+            path: "a.txt".into(),
+            text: Some(head.clone()),
+        }),
+        head: Some(FileVersion {
+            path: "a.txt".into(),
+            text: Some(head.clone()),
+        }),
+        worktree: Some(FileVersion {
+            path: "a.txt".into(),
+            text: Some(worktree.to_owned()),
+        }),
+        placeholders: [None; 2],
+        committed: ChangeKind::Unchanged,
+        uncommitted,
+    };
+    let mut before = demo::review();
+    let mut after = before.clone();
+    // The file is clean before the reload, so the previous review omits it.
+    before.files.clear();
+    after.files = vec![clean(&edited, ChangeKind::Modified)];
+
+    let replacement = fresh::Replacement::new(Review::new(after), &Review::new(before));
+    assert_eq!(replacement.fresh.get(&0), Some(&HashSet::from([7])));
+
+    // A file that is new in the working tree still pulses entirely.
+    let mut created = demo::review();
+    created.files = vec![InputFile {
+        base: None,
+        head: None,
+        committed: ChangeKind::Unchanged,
+        uncommitted: ChangeKind::Added,
+        ..clean("x\ny\n", ChangeKind::Added)
+    }];
+    let mut empty = demo::review();
+    empty.files.clear();
+    let replacement = fresh::Replacement::new(Review::new(created), &Review::new(empty));
+    assert_eq!(replacement.fresh.get(&0), Some(&HashSet::from([1, 2])));
+}

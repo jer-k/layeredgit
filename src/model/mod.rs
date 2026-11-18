@@ -99,6 +99,8 @@ pub(crate) struct Counts {
 
 pub(crate) struct FileDiff {
     paths: [Option<PathBuf>; 3],
+    /// HEAD's text: the previous working text of a file that was clean before a reload.
+    head_text: Option<String>,
     worktree_text: Option<String>,
     pub(crate) committed: ChangeKind,
     pub(crate) uncommitted: ChangeKind,
@@ -149,6 +151,9 @@ impl FileDiff {
             |diff| counts(&diff.lines),
         );
         Self {
+            head_text: versions[HEAD]
+                .as_mut()
+                .and_then(|version| version.text.take()),
             worktree_text: versions[WORKTREE]
                 .as_mut()
                 .and_then(|version| version.text.take()),
