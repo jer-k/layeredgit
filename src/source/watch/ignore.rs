@@ -43,6 +43,9 @@ impl Ignore {
             .excludes
             .as_deref()
             .and_then(|path| fs::metadata(path).ok())
+            // Writing to a device such as /dev/null can change ctime even
+            // though it has no ignore rules to invalidate.
+            .filter(fs::Metadata::is_file)
             .map(|meta| (meta.ino(), meta.ctime(), meta.ctime_nsec(), meta.len()));
         let changed = initialized && (before != self.excludes || self.excludes_stamp != stamp);
         self.excludes_stamp = stamp;
@@ -139,7 +142,12 @@ mod tests {
             );
         };
         git(&["init", "-q"]);
-        git(&["config", "core.excludesFile", "/dev/null"]);
+        let empty = tempfile::NamedTempFile::new().unwrap();
+        git(&[
+            "config",
+            "core.excludesFile",
+            empty.path().to_str().unwrap(),
+        ]);
         fs::write(root.join(".gitignore"), "/target/\n/mixed/\n").unwrap();
         fs::create_dir(root.join("target")).unwrap();
         fs::create_dir(root.join("mixed")).unwrap();
@@ -194,5 +202,9 @@ mod tests {
         git(&["add", "-f", "target/tracked"]);
         assert!(event(&mut ignore, ".git/index"));
         assert!(event(&mut ignore, "target/tracked"));
+
+        git(&["config", "core.excludesFile", "/dev/null"]);
+        assert!(event(&mut ignore, ".git/config"));
+        assert!(ignore.excludes_stamp.is_none());
     }
 }

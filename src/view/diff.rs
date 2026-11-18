@@ -4,7 +4,7 @@ use diff_stack::ThreeWayChange;
 
 use rune::{
     Color, Cursor, El, GrowthSpec, Live, MotionIntent, ScrollSpec, Shadow, TextStyle, Transition,
-    col, el, icon, memo, rich, row, text,
+    col, el, icon, memo, region_with, rich, row, text,
 };
 use rune_kit::{Kit, syntax::SyntaxTheme};
 
@@ -33,37 +33,31 @@ pub(super) fn pane(state: &State, kit: &Kit, palette: Palette, viewport_width: f
         + state.rows.widest_line as f32 * (0.6 * CODE_SIZE);
     let horizontal = !state.wrap && viewport_width > 0.0 && content_width > viewport_width;
     let show_counts = viewport_width == 0.0 || viewport_width >= 450.0;
-    let look = Rc::new(DiffLook::new(
-        kit,
-        palette,
-        horizontal.then_some(viewport_width),
-        show_counts,
-    ));
-    let render = Rc::clone(&look);
-    let list = col()
-        .key("diff-rows")
-        .role("list")
-        .label("File diffs")
-        .w_full()
-        .growth(GrowthSpec::default())
-        .virtual_rows(
-            state.rows.rows.len(),
-            LINE_HEIGHT,
-            |state: &State, index| {
-                state
-                    .rows
-                    .rows
-                    .get(index)
-                    .map_or(Cow::Borrowed(""), |row| Cow::Borrowed(row.key.as_str()))
-            },
-            move |state: &State, index| {
-                render
-                    .render_row(state, index)
-                    .transition(Transition::opacity())
-            },
-        )
-        .virtual_rows_version(state.rows_version)
-        .on_visible_rows(State::show_rows);
+    // Keep mounted rows through width-only commits. When horizontal scrolling
+    // is active, the sticky boxes need new widths but still use memoized content.
+    let list = region_with(
+        "diff-rows",
+        (
+            state.rows_version,
+            state.review_version,
+            state.filter,
+            state.wrap,
+            kit.dark,
+            palette.memo_key(),
+            horizontal.then(|| viewport_width.to_bits()),
+            show_counts,
+            state.pulse.files().next().is_some(),
+        ),
+        || {
+            diff_list(
+                state,
+                kit,
+                palette,
+                horizontal.then_some(viewport_width),
+                show_counts,
+            )
+        },
+    );
     let list = if horizontal {
         list.min_w(content_width)
     } else {
@@ -91,14 +85,50 @@ pub(super) fn pane(state: &State, kit: &Kit, palette: Palette, viewport_width: f
     if let Some(index) = state.sticky_file
         && let Some(file) = state.review.files.get(index)
     {
-        pane = pane.child(
-            file_header(index, file, state.filter, false, true, show_counts, kit)
-                .key(format!("sticky-header/{index}"))
-                .absolute(0.0, 0.0)
-                .w_full(),
-        );
+        pane = pane.child(memo(
+            format!("sticky-header/{index}"),
+            (state.review_version, state.filter, kit.dark, show_counts),
+            || {
+                file_header(index, file, state.filter, false, true, show_counts, kit)
+                    .absolute(0.0, 0.0)
+                    .w_full()
+            },
+        ));
     }
     pane.children(super::pulse::hint(state, kit, palette))
+}
+
+fn diff_list(
+    state: &State,
+    kit: &Kit,
+    palette: Palette,
+    horizontal: Option<f32>,
+    show_counts: bool,
+) -> El {
+    let look = Rc::new(DiffLook::new(kit, palette, horizontal, show_counts));
+    col()
+        .key("diff-rows")
+        .role("list")
+        .label("File diffs")
+        .w_full()
+        .growth(GrowthSpec::default())
+        .virtual_rows(
+            state.rows.rows.len(),
+            LINE_HEIGHT,
+            |state: &State, index| {
+                state
+                    .rows
+                    .rows
+                    .get(index)
+                    .map_or(Cow::Borrowed(""), |row| Cow::Borrowed(row.key.as_str()))
+            },
+            move |state: &State, index| {
+                look.render_row(state, index)
+                    .transition(Transition::opacity())
+            },
+        )
+        .virtual_rows_version(state.rows_version)
+        .on_visible_rows(State::show_rows)
 }
 
 fn code_inset(edge_width: f32) -> f32 {
@@ -145,7 +175,6 @@ impl DiffLook {
         };
         let collapsed = state.collapsed.contains(&entry.file);
         let filter = state.filter;
-        let horizontal = self.horizontal.map(f32::to_bits);
         let version = (
             state.review_version,
             filter,
@@ -166,15 +195,17 @@ impl DiffLook {
                         .then(|| state.pulse.opacity());
                     memo(
                         &entry.key,
-                        (version, horizontal.is_some(), pulse.is_some()),
+                        (version, self.horizontal.is_some(), pulse.is_some()),
                         || self.code_line(line, change, filter, state.wrap, pulse),
                     )
                 } else {
                     el().h(LINE_HEIGHT)
                 }
             }
-            kind => memo(&entry.key, (version, horizontal, self.show_counts), || {
-                let row = match kind {
+            kind => {
+                // The horizontal viewport changes during a drag. Update the
+                // sticky box's width without rebuilding its text and controls.
+                let row = memo(&entry.key, (version, self.show_counts), || match kind {
                     RowKind::Header => file_header(
                         entry.file,
                         file,
@@ -190,13 +221,13 @@ impl DiffLook {
                     RowKind::Placeholder(message) => self.placeholder(message),
                     RowKind::Space => self.space(collapsed),
                     RowKind::Line(_) => el().h(LINE_HEIGHT),
-                };
+                });
                 if let Some(width) = self.horizontal {
                     row.w(width).sticky_left(0.0)
                 } else {
                     row
                 }
-            }),
+            }
         }
     }
 

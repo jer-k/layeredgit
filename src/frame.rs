@@ -37,7 +37,8 @@ pub(crate) fn restore(handle: &WindowHandle, name: &str) {
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn restore(_: &WindowHandle, _: &str) {}
 
-fn isolated() -> bool {
+/// Whether Rune's storage was redirected to a separate directory.
+pub(crate) fn isolated() -> bool {
     ["RUNE_PREFS_DIR", "RUNE_DIRS_ROOT"]
         .into_iter()
         .any(|key| std::env::var_os(key).is_some_and(|value| !value.is_empty()))

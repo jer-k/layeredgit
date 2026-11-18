@@ -1,13 +1,14 @@
 //! Run one native window and hand terminal launches to the repository worker.
 
-use std::{path::Path, sync::mpsc, thread};
+use std::{path::Path, rc::Rc, sync::mpsc, thread};
 
-use rune::{App, AppSpec, RunOptions, Titlebar, WindowSpec};
+use rune::{App, AppSpec, RunOptions, Titlebar, WindowSpec, prefs::Prefs};
 
 use crate::{
     APP_ID, APP_NAME,
     cli::{Launch, Options},
     frame,
+    panels::{MIN_WINDOW_WIDTH, Widths},
     repositories::{Request, Workspace},
     state::State,
     view,
@@ -44,10 +45,25 @@ pub(crate) fn run(options: Options) -> Result<(), String> {
         } else {
             State::preview_workspace(preload, launch, demo_pulse)
         };
+        // Headless runs may opt into a scratch store. Read and write it outside
+        // the runner, before any frames are built and after the last frame.
+        let mut prefs = (headless && frame::isolated()).then(|| Prefs::open(APP_ID));
+        let widths = Rc::clone(&state.panels.preferred);
+        let initial = prefs.as_ref().map_or_else(Widths::default, Widths::load);
+        widths.set(initial);
         let app = window(SIZE).init(move || state);
-        return rune::try_run_windows_with_args(RunOptions::default(), tooling, move |_| {
+        rune::try_run_windows_with_args(RunOptions::default(), tooling, move |_| {
             [WindowSpec::from_app(FRAME, app)]
-        });
+        })?;
+        if let Some(prefs) = &mut prefs
+            && widths.get() != initial
+        {
+            widths
+                .get()
+                .save(prefs)
+                .map_err(|error| error.to_string())?;
+        }
+        return Ok(());
     }
     if !preload.is_empty() {
         return Err("Repeated --repo flags are for headless captures only.".into());
@@ -100,7 +116,7 @@ fn window(size: (f32, f32)) -> App<State> {
         setup: Some(State::setup),
         poll: Some(State::poll),
         families: ("Inter", "ui-monospace"),
-        min_size: Some((960.0, 480.0)),
+        min_size: Some((MIN_WINDOW_WIDTH, 480.0)),
         ..AppSpec::new(
             APP_NAME,
             size,
