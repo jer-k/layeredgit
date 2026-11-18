@@ -15,12 +15,12 @@ use crate::{
 
 use super::theme::{Provenance, accent_surface, dot, tint};
 
-const LINE_HEIGHT: f32 = 23.0;
+const LINE_HEIGHT: f32 = 20.0;
 const NUMBER_WIDTH: f32 = 57.0;
 const EDGE_WIDTH: f32 = 3.0;
 const MARKER_WIDTH: f32 = 35.0;
 const CODE_INSET: f32 = EDGE_WIDTH + NUMBER_WIDTH * 2.0 + MARKER_WIDTH;
-const CODE_SIZE: f32 = 13.0;
+const CODE_SIZE: f32 = 12.0;
 const CODE_PADDING: f32 = 19.0;
 
 pub(super) fn pane(state: &State, kit: &Kit, viewport_width: f32) -> El {
