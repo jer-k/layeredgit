@@ -1,5 +1,9 @@
 use diff_stack::ThreeWayChange;
-use rune::{ChromeInsets, Color, Cursor, El, MotionIntent, TextStyle, col, el, row, text};
+use std::sync::{Arc, OnceLock};
+
+use rune::{
+    ChromeInsets, Color, Cursor, El, Image, ImageCache, MotionIntent, TextStyle, col, el, row, text,
+};
 use rune_kit::{FileNode, Kit, Tree, TreeItem, TreeStyle};
 
 use crate::{
@@ -14,13 +18,28 @@ use crate::{
 
 use super::theme::{Provenance, accent_surface, dot};
 
-pub(crate) fn review_mark(state: &State, size: f32) -> El {
-    let mark = el().key("review-mark").size(size, size).a11y_hidden();
-    if let Some(image) = &state.review_mark {
-        mark.pixels(image.pixels())
-    } else {
-        mark
-    }
+/// The app icon, rasterized once for every window and headless run.
+///
+/// It is a small SVG, so decoding it synchronously on first use costs about a
+/// millisecond and means the mark never depends on a waker or app state.
+fn review_mark_image() -> &'static Image {
+    static MARK: OnceLock<Image> = OnceLock::new();
+    MARK.get_or_init(|| {
+        let image = ImageCache::new(Arc::new(|| {})).svg(
+            include_bytes!("../../assets/icon.svg").as_slice(),
+            48.0,
+            2.0,
+        );
+        let _ = image.wait();
+        image
+    })
+}
+
+pub(crate) fn review_mark(size: f32) -> El {
+    el().key("review-mark")
+        .size(size, size)
+        .a11y_hidden()
+        .pixels(review_mark_image().pixels())
 }
 
 pub(super) fn toolbar(state: &State, kit: &Kit, insets: ChromeInsets, layer: &mut Vec<El>) -> El {
@@ -35,7 +54,7 @@ pub(super) fn toolbar(state: &State, kit: &Kit, insets: ChromeInsets, layer: &mu
         .shrink()
         .min_w(0.0)
         .gap(10.0)
-        .child(review_mark(state, 32.0))
+        .child(review_mark(32.0))
         .child(
             text(name)
                 .key("workspace-title")

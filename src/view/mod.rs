@@ -140,7 +140,7 @@ fn empty(state: &State, kit: &Kit) -> El {
         .center()
         .gap(12.0)
         .px(32.0)
-        .child(chrome::review_mark(state, 48.0))
+        .child(chrome::review_mark(48.0))
         .child(
             text("Review a repository")
                 .role("heading")

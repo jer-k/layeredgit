@@ -1,15 +1,8 @@
 //! Run one native window and hand terminal launches to the repository worker.
 
-use std::{
-    path::Path,
-    rc::Rc,
-    sync::{Arc, mpsc},
-    thread,
-};
+use std::{path::Path, rc::Rc, sync::mpsc, thread};
 
-use rune::{
-    App, AppSpec, Image, ImageCache, RunOptions, Titlebar, Waker, WindowSpec, prefs::Prefs,
-};
+use rune::{App, AppSpec, RunOptions, Titlebar, WindowSpec, prefs::Prefs};
 
 use crate::{
     APP_ID, APP_NAME,
@@ -47,17 +40,11 @@ pub(crate) fn run(options: Options) -> Result<(), String> {
     } = options;
     let headless = rune::tooling::Args::parse_from(tooling.clone()).headless();
     if headless || launch == Launch::Demo {
-        let mut state = if launch == Launch::Demo {
+        let state = if launch == Launch::Demo {
             State::open(None, headless, demo_pulse)
         } else {
             State::preview_workspace(preload, launch, demo_pulse)
         };
-        if headless {
-            // Finish rasterizing before the first captured frame.
-            let mark = load_review_mark(Arc::new(|| {}));
-            let _ = mark.wait();
-            state.review_mark = Some(mark);
-        }
         // Headless runs may opt into a scratch store. Read and write it outside
         // the runner, before any frames are built and after the last frame.
         let mut prefs = (headless && frame::isolated()).then(|| Prefs::open(APP_ID));
@@ -135,9 +122,6 @@ fn window(size: (f32, f32)) -> App<State> {
         on_key: Some(State::key),
         scenes: &[("reduced-motion", State::force_reduced_motion)],
         setup: Some(|state, waker| {
-            state
-                .review_mark
-                .get_or_insert_with(|| load_review_mark(Arc::clone(&waker)));
             state.setup(waker);
         }),
         poll: Some(State::poll),
@@ -153,8 +137,4 @@ fn window(size: (f32, f32)) -> App<State> {
     .titlebar(Titlebar::new(view::TOOLBAR_HEIGHT))
     .tab_visits_controls(true)
     .on_visibility(State::visibility)
-}
-
-fn load_review_mark(waker: Waker) -> Image {
-    ImageCache::new(waker).svg(include_bytes!("../assets/icon.svg").as_slice(), 48.0, 2.0)
 }
