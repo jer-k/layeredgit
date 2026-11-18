@@ -2,6 +2,7 @@
 
 mod chrome;
 mod diff;
+mod panels;
 mod pulse;
 mod repositories;
 mod revisions;
@@ -12,11 +13,13 @@ use rune_kit::{Button, ButtonVariant, Kit};
 
 use crate::{
     palette::Palette,
+    panels::{MIN_DIFF_WIDTH, MIN_WINDOW_WIDTH, Panel, PanelRoom},
     state::{State, Status},
 };
 
 /// Height of the review toolbar and native controls.
 pub(crate) const TOOLBAR_HEIGHT: f32 = 68.0;
+const DIFF_PADDING: f32 = 24.0;
 
 /// Draws the application in the current system appearance.
 pub(crate) fn review(state: &State, cx: &mut Cx<State>) -> El {
@@ -27,12 +30,42 @@ pub(crate) fn review(state: &State, cx: &mut Cx<State>) -> El {
     cx.caption_color(kit.c.text_base);
     let palette = state.palette(kit.dark);
     let mut layer = Vec::new();
+    let width = cx
+        .layout_with("review", |rect| rect[2])
+        .unwrap_or(MIN_WINDOW_WIDTH);
+    let collapsed = state
+        .workspace
+        .as_ref()
+        .map(|workspace| workspace.collapsed);
+    let repositories = PanelRoom::new(Panel::Repositories, width, collapsed);
+    let files = PanelRoom::new(Panel::Files, width, collapsed);
     let content = match &state.status {
         Status::Empty => empty(state, &kit),
         Status::Loading | Status::Changing => notice("Loading review…", None, &kit),
         Status::Failed(error) => notice("Couldn’t load review", Some(error), &kit),
         Status::Ready { refresh_error } => {
-            workspace(state, refresh_error.as_deref(), &kit, palette, cx)
+            let diff_width = if cfg!(feature = "dev") {
+                // The palette tuner can dock next to the diff in dev builds.
+                cx.layout_with("diff-scroll", |rect| rect[2]).unwrap_or(0.0)
+            } else {
+                let repo_width = collapsed.map_or(0.0, |collapsed| {
+                    state
+                        .panels
+                        .width(Panel::Repositories, repositories, collapsed)
+                });
+                width
+                    - repo_width
+                    - state.panels.width(Panel::Files, files, false)
+                    - 2.0 * DIFF_PADDING
+            };
+            workspace(
+                state,
+                refresh_error.as_deref(),
+                &kit,
+                palette,
+                files,
+                diff_width,
+            )
         }
     };
     #[cfg(feature = "dev")]
@@ -60,7 +93,13 @@ pub(crate) fn review(state: &State, cx: &mut Cx<State>) -> El {
             .key("repository-workspace")
             .grow(1.0)
             .min_h(0.0)
-            .child(repositories::sidebar(workspace, &kit, &mut layer))
+            .child(repositories::sidebar(
+                state,
+                workspace,
+                repositories,
+                &kit,
+                &mut layer,
+            ))
             .child(content)
     } else {
         content
@@ -133,14 +172,15 @@ fn workspace(
     refresh_error: Option<&str>,
     kit: &Kit,
     palette: Palette,
-    cx: &Cx<State>,
+    files: PanelRoom,
+    diff_width: f32,
 ) -> El {
     let mut pane = col()
         .key("review-pane")
         .grow(1.0)
-        .min_w(0.0)
+        .min_w(MIN_DIFF_WIDTH)
         .min_h(0.0)
-        .px(24.0);
+        .px(DIFF_PADDING);
     if let Some(error) = refresh_error {
         pane = pane.child(
             text(format!("Couldn’t refresh review · {error}"))
@@ -160,20 +200,19 @@ fn workspace(
         };
         pane.child(notice(message, None, kit))
     } else {
-        let width = cx.layout_size("diff-scroll").map_or(0.0, |size| size[0]);
         pane.child(chrome::legend(
             state,
             kit,
             palette,
-            width > 0.0 && width < 565.0,
+            diff_width > 0.0 && diff_width < 565.0,
         ))
-        .child(diff::pane(state, kit, palette, width))
+        .child(diff::pane(state, kit, palette, diff_width))
     };
     row()
         .key("workspace")
         .grow(1.0)
         .min_h(0.0)
-        .child(chrome::sidebar(state, kit, palette))
+        .child(chrome::sidebar(state, kit, palette, files))
         .child(pane)
 }
 

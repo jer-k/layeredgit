@@ -8,6 +8,7 @@ mod input;
 mod instance;
 mod model;
 mod palette;
+mod panels;
 mod preferences;
 mod repositories;
 mod source;

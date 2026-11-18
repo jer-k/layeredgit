@@ -12,7 +12,9 @@ use repo::{Branch, Repo};
 use rune::{AppHandle, PointerPress, Waker, prefs::Prefs};
 use rune_kit::ComboboxState;
 
-use crate::{APP_ID, cli::Launch, preferences::Preferences, source::Repository, state::State};
+use crate::{
+    APP_ID, cli::Launch, panels::Widths, preferences::Preferences, source::Repository, state::State,
+};
 
 const STATUS_INTERVAL: Duration = Duration::from_secs(30);
 
@@ -188,6 +190,7 @@ pub(crate) struct Choice {
 pub(crate) enum Request {
     Launch(Launch),
     Save(Preferences),
+    ResizePanels(Widths),
     Inspect(PathBuf),
     Choose(Choice),
 }
@@ -196,8 +199,12 @@ pub(crate) fn route(initial: Launch, requests: &Receiver<Request>, handle: &AppH
     let mut prefs = Prefs::open(APP_ID);
     let mut saved = Preferences::load(&prefs);
     let restored = saved.clone();
+    let widths = Widths::load(&prefs);
     let select = initial == Launch::Start;
-    handle.update(move |state, tx| state.restore_workspace(restored, select, tx));
+    handle.update(move |state, tx| {
+        state.panels.preferred.set(widths);
+        state.restore_workspace(restored, select, tx);
+    });
     let mut log = std::env::var_os("GIT_VIEWER_LAUNCH_LOG").and_then(|path| {
         std::fs::OpenOptions::new()
             .create(true)
@@ -216,6 +223,12 @@ pub(crate) fn route(initial: Launch, requests: &Receiver<Request>, handle: &AppH
                     handle.update(move |state, _| state.workspace_error(error));
                 }
                 saved = settings;
+            }
+            Ok(Request::ResizePanels(widths)) => {
+                if let Err(error) = widths.save(&mut prefs) {
+                    let error = format!("Couldn’t save panel widths: {error}");
+                    handle.update(move |state, _| state.workspace_error(error));
+                }
             }
             Ok(Request::Inspect(path)) => inspect(path, handle),
             Ok(Request::Choose(choice)) => {

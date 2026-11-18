@@ -7,6 +7,7 @@ use rune::{Cursor, El, GrowthSpec, ScrollSpec, Tx, col, el, row, text};
 use rune_kit::{Kit, MenuItem, context_menu};
 
 use crate::{
+    panels::{Panel, PanelRoom},
     repositories::{Entry, Workspace, row_key},
     state::State,
 };
@@ -15,7 +16,13 @@ use super::theme::{accent_surface, dot};
 
 const ROW: f32 = 68.0;
 
-pub(super) fn sidebar(workspace: &Workspace, kit: &Kit, layer: &mut Vec<El>) -> El {
+pub(super) fn sidebar(
+    state: &State,
+    workspace: &Workspace,
+    room: PanelRoom,
+    kit: &Kit,
+    layer: &mut Vec<El>,
+) -> El {
     let color = &kit.c;
     let compact = workspace.collapsed;
     let header = if compact {
@@ -65,7 +72,7 @@ pub(super) fn sidebar(workspace: &Workspace, kit: &Kit, layer: &mut Vec<El>) -> 
         .key("repository-sidebar")
         .role("navigation")
         .label("Repository sidebar")
-        .w(if compact { 53.0 } else { 218.0 })
+        .w(state.panels.width(Panel::Repositories, room, compact))
         .min_h(0.0)
         .fill(color.bg_base)
         .border_sides([0.0, 1.0, 0.0, 0.0], color.border_muted)
@@ -84,7 +91,7 @@ pub(super) fn sidebar(workspace: &Workspace, kit: &Kit, layer: &mut Vec<El>) -> 
                     .build(kit, layer),
             );
     }
-    panel
+    panel.children((!compact).then(|| super::panels::handle(Panel::Repositories, room, state, kit)))
 }
 
 fn repository_list(workspace: &Workspace, kit: &Kit) -> El {

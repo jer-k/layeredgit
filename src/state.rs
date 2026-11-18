@@ -1,6 +1,7 @@
 //! Review interactions and the current virtual list projection.
 
 mod files;
+mod panels;
 mod pulse;
 mod restore;
 mod workspace;
@@ -35,6 +36,7 @@ pub(crate) enum Status {
 
 pub(crate) struct State {
     pub(crate) workspace: Option<Workspace>,
+    pub(crate) panels: panels::Panels,
     pub(crate) review: Arc<Review>,
     pub(crate) status: Status,
     pub(crate) has_worktree: bool,
@@ -99,6 +101,7 @@ impl State {
         }
         Self {
             workspace: None,
+            panels: panels::Panels::default(),
             review: Arc::new(review),
             status,
             has_worktree: true,
@@ -211,6 +214,7 @@ impl State {
                 true
             }
             Some(Ok(RefreshEvent::Updating)) => {
+                self.panels.cancel_drag();
                 self.status = Status::Changing;
                 true
             }

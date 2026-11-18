@@ -1,0 +1,8 @@
+{
+  "events": [
+    {"t": 0.20, "type": "drag", "key": "resize-repositories", "dx": 120, "dy": 0, "dur": 0.40},
+    {"t": 0.80, "type": "drag", "key": "resize-files", "dx": 164, "dy": 0, "dur": 0.45},
+    {"t": 1.50, "type": "mark", "name": "saved"},
+    {"t": 1.70, "type": "mark", "name": "end"}
+  ]
+}

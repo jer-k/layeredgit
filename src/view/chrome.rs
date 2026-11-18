@@ -7,6 +7,7 @@ use crate::{
     input::ChangeKind,
     model::Filter,
     palette::Palette,
+    panels::{Panel, PanelRoom},
     repositories::Side,
     state::{State, Status},
 };
@@ -273,7 +274,7 @@ fn wrap_toggle(wrap: bool, kit: &Kit) -> El {
         .on_press_tx(State::toggle_wrap)
 }
 
-pub(super) fn sidebar(state: &State, kit: &Kit, palette: Palette) -> El {
+pub(super) fn sidebar(state: &State, kit: &Kit, palette: Palette, room: PanelRoom) -> El {
     let c = &kit.c;
     let mut style = TreeStyle::from_kit(kit).gap(7.0).radius(kit.radius.md);
     style.row_height = 32.0;
@@ -326,7 +327,7 @@ pub(super) fn sidebar(state: &State, kit: &Kit, palette: Palette) -> El {
         .padding(9.0);
     col()
         .key("sidebar")
-        .w(266.0)
+        .w(state.panels.width(Panel::Files, room, false))
         .min_h(0.0)
         .fill(c.bg_base)
         .border_sides([0.0, 1.0, 0.0, 0.0], c.border_muted)
@@ -353,6 +354,7 @@ pub(super) fn sidebar(state: &State, kit: &Kit, palette: Palette) -> El {
         )
         .child(list)
         .child(shortcuts(kit, state.can_refresh()))
+        .child(super::panels::handle(Panel::Files, room, state, kit))
 }
 
 fn shortcuts(kit: &Kit, can_refresh: bool) -> El {

@@ -242,6 +242,7 @@ impl State {
 
     pub(crate) fn toggle_repositories(&mut self, tx: &mut Tx) {
         if let Some(workspace) = &mut self.workspace {
+            self.panels.cancel_drag();
             workspace.collapsed = !workspace.collapsed;
             tx.instant();
             self.save_workspace();
@@ -307,6 +308,8 @@ impl State {
         next.rows_version = self.rows_version.wrapping_add(1);
         next.review_version = self.review_version.wrapping_add(1);
         next.headless_reduced_motion = self.headless_reduced_motion;
+        std::mem::swap(&mut next.panels, &mut self.panels);
+        next.panels.cancel_drag();
         #[cfg(feature = "dev")]
         std::mem::swap(&mut next.tuning, &mut self.tuning);
         if let Some(refresh) = &mut next.refresh {
@@ -478,6 +481,7 @@ impl State {
     fn retarget_review(&mut self, repository: Repository, head: Option<OsString>, tx: &mut Tx) {
         self.pulse.clear();
         if let Some(refresh) = &mut self.refresh {
+            self.panels.cancel_drag();
             if matches!(self.status, Status::Ready { .. }) {
                 self.status = Status::Changing;
             }
