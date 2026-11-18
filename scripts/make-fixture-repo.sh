@@ -14,6 +14,9 @@ rm -rf "$dir"
 mkdir -p "$dir"
 cd "$dir"
 
+# Never act on a repo named by an inherited git environment (e.g. when run from a hook).
+for var in $(env | sed -n 's/^\(GIT_[A-Za-z_]*\)=.*/\1/p'); do unset "$var"; done
+
 # Isolate from the user's git config so the fixture is identical everywhere.
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 export GIT_AUTHOR_NAME=Fixture GIT_AUTHOR_EMAIL=fixture@example.com
