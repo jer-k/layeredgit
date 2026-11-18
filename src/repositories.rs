@@ -13,7 +13,7 @@ use rune::{AppHandle, PointerPress, Waker, prefs::Prefs};
 use rune_kit::ComboboxState;
 
 use crate::{
-    APP_ID, cli::Launch, panels::Widths, preferences::Preferences, source::Repository, state::State,
+    cli::Launch, panels::Widths, preferences::Preferences, source::Repository, state::State,
 };
 
 const STATUS_INTERVAL: Duration = Duration::from_secs(30);
@@ -195,8 +195,12 @@ pub(crate) enum Request {
     Choose(Choice),
 }
 
-pub(crate) fn route(initial: Launch, requests: &Receiver<Request>, handle: &AppHandle<State>) {
-    let mut prefs = Prefs::open(APP_ID);
+pub(crate) fn route(
+    initial: Launch,
+    requests: &Receiver<Request>,
+    handle: &AppHandle<State>,
+    mut prefs: Prefs,
+) {
     let mut saved = Preferences::load(&prefs);
     let restored = saved.clone();
     let widths = Widths::load(&prefs);
@@ -205,7 +209,7 @@ pub(crate) fn route(initial: Launch, requests: &Receiver<Request>, handle: &AppH
         state.panels.preferred.set(widths);
         state.restore_workspace(restored, select, tx);
     });
-    let mut log = std::env::var_os("GIT_VIEWER_LAUNCH_LOG").and_then(|path| {
+    let mut log = std::env::var_os("LAYEREDGIT_LAUNCH_LOG").and_then(|path| {
         std::fs::OpenOptions::new()
             .create(true)
             .append(true)

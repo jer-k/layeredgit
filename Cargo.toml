@@ -22,7 +22,7 @@ print_stdout = "warn"
 print_stderr = "warn"
 
 [package]
-name = "git-viewer-rune"
+name = "layeredgit"
 version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
@@ -39,6 +39,7 @@ rune = { git = "https://github.com/anomalyco/rune", rev = "10a39584cc1ff739477be
 rune-kit = { git = "https://github.com/anomalyco/rune", rev = "10a39584cc1ff739477be52e333a742a024ac956", version = "0.0.1" }
 rune-knobs = { git = "https://github.com/anomalyco/rune", rev = "10a39584cc1ff739477be52e333a742a024ac956", version = "0.0.1", optional = true }
 rune-mac = { git = "https://github.com/anomalyco/rune", rev = "10a39584cc1ff739477be52e333a742a024ac956", version = "0.0.1" }
+serde_json = "1.0.154"
 
 # Cargo applies patches from the application manifest.
 [patch.crates-io]

@@ -2,6 +2,9 @@
 
 use rune::WindowHandle;
 
+/// `AppKit`'s autosave name for the review window, shared with the legacy app.
+pub(crate) const FRAME_NAME: &str = "workspace";
+
 pub(crate) fn size(name: &str, fallback: (f32, f32)) -> (f32, f32) {
     if isolated() {
         fallback

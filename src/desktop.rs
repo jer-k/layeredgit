@@ -7,14 +7,14 @@ use rune::{App, AppSpec, RunOptions, Titlebar, WindowSpec, prefs::Prefs};
 use crate::{
     APP_ID, APP_NAME,
     cli::{Launch, Options},
-    frame,
+    frame::{self, FRAME_NAME},
     panels::{MIN_WINDOW_WIDTH, Widths},
+    preferences::migration,
     repositories::{Request, Workspace},
     state::State,
     view,
 };
 
-const FRAME: &str = "workspace";
 const SIZE: (f32, f32) = (1360.0, 820.0);
 
 pub(crate) fn repo_name(root: &Path) -> String {
@@ -53,7 +53,7 @@ pub(crate) fn run(options: Options) -> Result<(), String> {
         widths.set(initial);
         let app = window(SIZE).init(move || state);
         rune::try_run_windows_with_args(RunOptions::default(), tooling, move |_| {
-            [WindowSpec::from_app(FRAME, app)]
+            [WindowSpec::from_app(FRAME_NAME, app)]
         })?;
         if let Some(prefs) = &mut prefs
             && widths.get() != initial
@@ -90,22 +90,30 @@ fn run_desktop(launch: Launch, tooling: Vec<String>) -> Result<(), String> {
         if !crate::instance::claim(&launch, move |launch| {
             send.send(Request::Launch(launch)).is_ok()
         })
-        .map_err(|error| format!("Git Viewer launch handoff: {error}"))?
+        .map_err(|error| format!("{APP_NAME} launch handoff: {error}"))?
         {
             return Ok(());
         }
     }
-    let app = window(frame::size(FRAME, SIZE))
-        .on_window(|window| frame::restore(window, FRAME))
+    // Migration must finish before AppKit reads the frame and the worker loads
+    // repository settings. The window and its event loop do not exist yet.
+    let prefs = thread::Builder::new()
+        .name("migrate-preferences".into())
+        .spawn(migration::run)
+        .map_err(|error| format!("Couldn’t start preferences migration: {error}"))?
+        .join()
+        .map_err(|_| "Preferences migration thread failed".to_owned())??;
+    let app = window(frame::size(FRAME_NAME, SIZE))
+        .on_window(|window| frame::restore(window, FRAME_NAME))
         .keep_running()
         .init(move || State::with_workspace(Workspace::live(send)));
     let handle = app.handle();
     thread::Builder::new()
         .name("review-repositories".into())
-        .spawn(move || crate::repositories::route(launch, &receive, &handle))
+        .spawn(move || crate::repositories::route(launch, &receive, &handle, prefs))
         .map_err(|error| format!("Couldn’t start the repository worker: {error}"))?;
     rune::try_run_windows_with_args(RunOptions::default(), tooling, move |_| {
-        [WindowSpec::from_app(FRAME, app)]
+        [WindowSpec::from_app(FRAME_NAME, app)]
     })
 }
 

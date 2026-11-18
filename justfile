@@ -25,10 +25,10 @@ check: fmt-check lint test
 install-hooks:
     git config core.hooksPath .githooks
 
-# Build the release binary and install Git Viewer.app and git-review.
+# Build the release binary and install layeredgit.app and the layeredgit command.
 install:
     python3 scripts/install-mac-app.py install
 
-# Remove Git Viewer.app and git-review from the selected directories.
+# Remove layeredgit and its legacy installation from the selected directories.
 uninstall:
     python3 scripts/install-mac-app.py uninstall

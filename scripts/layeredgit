@@ -1,10 +1,10 @@
 #!/bin/sh
-# Installed by just install with the executable path for this installation.
+# Installed by the layeredgit just install recipe.
 set -eu
 
-app_executable="$HOME/Applications/Git Viewer.app/Contents/MacOS/git-viewer-rune"
-usage='Usage: git review [BASE]
-Open Git Viewer for the working tree containing the current directory.'
+app_executable="$HOME/Applications/layeredgit.app/Contents/MacOS/layeredgit"
+usage='Usage: layeredgit [BASE]
+Open layeredgit for the working tree containing the current directory.'
 
 case ${1:-} in
     -h|--help) printf '%s\n' "$usage"; exit 0 ;;
@@ -14,7 +14,7 @@ if [ "$#" -gt 1 ]; then
     exit 2
 fi
 if [ ! -x "$app_executable" ]; then
-    printf 'git review: Git Viewer executable not found at %s\n' "$app_executable" >&2
+    printf 'layeredgit: app executable not found at %s\n' "$app_executable" >&2
     exit 1
 fi
 

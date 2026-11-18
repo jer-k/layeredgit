@@ -1070,23 +1070,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "git-viewer-rune"
-version = "0.1.0"
-dependencies = [
- "diff-stack",
- "notify",
- "objc2 0.6.5",
- "objc2-app-kit 0.3.2",
- "objc2-foundation 0.3.2",
- "repo",
- "rune",
- "rune-kit",
- "rune-knobs",
- "rune-mac",
- "tempfile",
-]
-
-[[package]]
 name = "gpu-allocator"
 version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1483,6 +1466,24 @@ dependencies = [
  "arrayvec",
  "euclid",
  "smallvec",
+]
+
+[[package]]
+name = "layeredgit"
+version = "0.1.0"
+dependencies = [
+ "diff-stack",
+ "notify",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
+ "repo",
+ "rune",
+ "rune-kit",
+ "rune-knobs",
+ "rune-mac",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

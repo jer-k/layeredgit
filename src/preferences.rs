@@ -1,10 +1,13 @@
 //! Persistent workspace settings, read and written by the repository worker.
 
+pub(crate) mod migration;
+
 use std::{ffi::OsString, path::PathBuf};
 
 use rune::prefs::{Prefs, PrefsError};
 
 const KEY: &str = "repository_sidebar";
+const RECENTS_KEY: &str = "recent_repositories";
 type StoredRepository = (PathBuf, Option<OsString>);
 type Stored = (Vec<(OsString, Option<OsString>)>, Option<OsString>, bool);
 
@@ -19,9 +22,7 @@ impl Preferences {
     pub(crate) fn load(prefs: &Prefs) -> Self {
         let mut paths = Vec::new();
         let (repositories, selected, collapsed) = prefs.get::<Stored>(KEY).unwrap_or_else(|| {
-            let previous = prefs
-                .get::<Vec<OsString>>("recent_repositories")
-                .unwrap_or_default();
+            let previous = prefs.get::<Vec<OsString>>(RECENTS_KEY).unwrap_or_default();
             (
                 previous.into_iter().map(|path| (path, None)).collect(),
                 None,
@@ -64,7 +65,7 @@ mod tests {
         let mut prefs = Prefs::at(&path);
         prefs
             .set(
-                "recent_repositories",
+                RECENTS_KEY,
                 &["/one", "/two", "/one", "relative"].map(OsString::from),
             )
             .unwrap();

@@ -19,7 +19,7 @@ use repo::{
     decode_text,
 };
 
-const ISOLATED: &str = "GIT_VIEWER_REPO_TEST_ISOLATED";
+const ISOLATED: &str = "LAYEREDGIT_REPO_TEST_ISOLATED";
 
 // Re-exec each test so both fixture and library subprocesses inherit the
 // isolation settings, without mutating the process environment in parallel.
