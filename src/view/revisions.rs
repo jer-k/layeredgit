@@ -3,7 +3,7 @@ use std::{
     path::Path,
 };
 
-use rune::{Cursor, El, row, text};
+use rune::{Cursor, El, icon, row, text};
 use rune_kit::{Combobox, ComboboxOption, Kit};
 
 use crate::{
@@ -109,7 +109,7 @@ fn trigger(key: &'static str, name: &str, side: Side, kit: &Kit) -> El {
                         .truncate_middle()
                         .help_when_truncated(name),
                 )
-                .child(text("⌄").font(kit.ty.ui).color(kit.c.text_muted)),
+                .child(icon(kit.glyph.chevron_down, 14.0).color(kit.c.text_muted)),
         )
 }
 
