@@ -1,7 +1,10 @@
-use rune::{El, Live, el, row, text};
+use rune::{Cursor, El, Live, Transition, el, row, text};
 use rune_kit::Kit;
 
-use crate::{palette::Palette, state::State};
+use crate::{
+    palette::Palette,
+    state::{PulseDirection, State},
+};
 
 use super::theme::tint;
 
@@ -17,33 +20,61 @@ pub(super) fn wash(kit: &Kit, palette: Palette, opacity: &Live<f32>, radius: f32
 
 pub(super) fn hint(state: &State, kit: &Kit, palette: Palette) -> Option<El> {
     let (above, below) = state.pulse_offscreen();
-    let label = match (above, below) {
-        (0, 0) => return None,
-        (0, count) => format!("{} changed below ↓", lines(count)),
-        (count, 0) => format!("{} changed above ↑", lines(count)),
-        (above, below) => format!("Changed ↑ {above} · ↓ {below}"),
-    };
+    if above == 0 && below == 0 {
+        return None;
+    }
     Some(
         row()
             .key("pulse-offscreen")
-            .role("status")
             .pin(None, None, Some(12.0), Some(12.0))
-            .px(10.0)
-            .py(5.0)
-            .radius(kit.radius.md)
-            .fill(tint(
-                kit.c.bg_base,
-                palette.pulse(),
-                if kit.dark { 0.24 } else { 0.13 },
-            ))
-            .border(1.0, tint(kit.c.bg_base, palette.pulse(), 0.32))
+            .gap(6.0)
+            .instant_changes()
+            .transition(Transition::none())
             .live_opacity(state.pulse.opacity())
-            .child(
-                text(label)
-                    .font(kit.ty.text_xsmall_medium)
-                    .color(kit.c.text_base),
+            .children(
+                [
+                    (PulseDirection::Above, above),
+                    (PulseDirection::Below, below),
+                ]
+                .into_iter()
+                .filter(|&(_, count)| count > 0)
+                .map(|(direction, count)| jump_button(count, direction, kit, palette)),
             ),
     )
+}
+
+fn jump_button(count: usize, direction: PulseDirection, kit: &Kit, palette: Palette) -> El {
+    let (key, position, arrow, shortcut) = match direction {
+        PulseDirection::Above => ("above", "above", "↑", "p"),
+        PulseDirection::Below => ("below", "below", "↓", "n"),
+    };
+    let label = format!("{} changed {position}", lines(count));
+    row()
+        .key(key)
+        .role("button")
+        .label(format!("{label}. Jump to nearest change"))
+        .focusable(true)
+        .cursor(Cursor::Pointer)
+        .help(format!("Jump to nearest change {position} ({shortcut})"))
+        .on_press_tx(move |state: &mut State, tx| {
+            state.jump_to_pulse(direction, tx);
+        })
+        .px(10.0)
+        .py(5.0)
+        .radius(kit.radius.md)
+        .fill(tint(
+            kit.c.bg_base,
+            palette.pulse(),
+            if kit.dark { 0.24 } else { 0.13 },
+        ))
+        .border(1.0, tint(kit.c.bg_base, palette.pulse(), 0.32))
+        .hover(kit.c.hover)
+        .press(kit.c.pressed)
+        .child(
+            text(format!("{label} {arrow}"))
+                .font(kit.ty.text_xsmall_medium)
+                .color(kit.c.text_base),
+        )
 }
 
 fn lines(count: usize) -> String {

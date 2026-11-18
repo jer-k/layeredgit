@@ -37,6 +37,7 @@ fn main() {
     }
     let app = App::new(AppSpec {
         on_key: Some(State::key),
+        scenes: &[("reduced-motion", State::force_reduced_motion)],
         setup: Some(State::setup),
         poll: Some(State::poll),
         families: ("Inter", "ui-monospace"),

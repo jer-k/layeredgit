@@ -3,8 +3,8 @@ use std::{borrow::Cow, ops::Range, rc::Rc};
 use diff_stack::ThreeWayChange;
 
 use rune::{
-    Align, Color, Cursor, El, GrowthSpec, Live, MotionIntent, ScrollSpec, Shadow, TextStyle,
-    Transition, col, el, icon, memo, rich, row, text,
+    Color, Cursor, El, GrowthSpec, Live, MotionIntent, ScrollSpec, Shadow, TextStyle, Transition,
+    col, el, icon, memo, rich, row, text,
 };
 use rune_kit::{Kit, syntax::SyntaxTheme};
 
@@ -237,18 +237,25 @@ impl DiffLook {
             .items_stretch()
             .fill(p.gutter)
             .children(wash())
-            .child(el().w(self.palette.edge_width).fill(if p.working {
-                self.palette.edge()
-            } else {
-                Color::TRANSPARENT
-            }))
-            .child(self.number(
-                line.number(old).map_or_else(String::new, |n| n.to_string()),
-                &p,
-                false,
-            ))
-            .child(self.number(new_number, &p, head_only));
-        let marker = row().w(MARKER_WIDTH);
+            .child(
+                el().key("provenance-edge")
+                    .w(self.palette.edge_width)
+                    .fill(if p.working {
+                        self.palette.edge()
+                    } else {
+                        Color::TRANSPARENT
+                    }),
+            )
+            .child(
+                self.number(
+                    line.number(old).map_or_else(String::new, |n| n.to_string()),
+                    &p,
+                    false,
+                )
+                .key("old-number"),
+            )
+            .child(self.number(new_number, &p, head_only).key("new-number"));
+        let marker = row().key("mark").w(MARKER_WIDTH).instant_changes();
         let marker = if p.marker.is_empty() {
             marker
         } else {
@@ -258,6 +265,7 @@ impl DiffLook {
                     .gap(5.0)
                     .pl(3.0)
                     .items_center()
+                    .motion_intent(MotionIntent::STEP | MotionIntent::CUT)
                     .child(if p.working {
                         dot(self.palette.dot(), 5.0)
                     } else {
@@ -294,36 +302,38 @@ impl DiffLook {
 
     fn number(&self, number: String, p: &Provenance, head_only: bool) -> El {
         let c = &self.kit.c;
-        let border = [0.0, 1.0, 0.0, 0.0];
-        if head_only {
-            row()
-                .w(NUMBER_WIDTH)
-                .pr(8.0)
-                .items_start()
-                .justify_end()
-                .border_sides(border, c.border_muted)
-                .child(
-                    text(number)
-                        .font(TextStyle {
-                            size: 11.0,
-                            ..self.code
-                        })
-                        .color(c.info.fg)
-                        .px(5.0)
-                        .radius(3.0)
-                        .fill(accent_surface(&self.kit))
-                        .help("Line number at HEAD"),
-                )
-        } else if number.is_empty() {
-            el().w(NUMBER_WIDTH).border_sides(border, c.border_muted)
+        // Keep the column mounted as a number becomes a badge or goes blank.
+        // Only its contents cut over; the enclosing row still rides the reflow.
+        let cell = row()
+            .w(NUMBER_WIDTH)
+            .pr(8.0)
+            .items_start()
+            .justify_end()
+            .border_sides([0.0, 1.0, 0.0, 0.0], c.border_muted)
+            .instant_changes();
+        if number.is_empty() {
+            cell
+        } else if head_only {
+            cell.child(
+                text(number)
+                    .font(TextStyle {
+                        size: 11.0,
+                        ..self.code
+                    })
+                    .color(c.info.fg)
+                    .px(5.0)
+                    .radius(3.0)
+                    .fill(accent_surface(&self.kit))
+                    .help("Line number at HEAD")
+                    .motion_intent(MotionIntent::STEP | MotionIntent::CUT),
+            )
         } else {
-            text(number)
-                .w(NUMBER_WIDTH)
-                .pr(8.0)
-                .font(self.code)
-                .color(p.ink)
-                .align(Align::End)
-                .border_sides(border, c.border_muted)
+            cell.child(
+                text(number)
+                    .font(self.code)
+                    .color(p.ink)
+                    .motion_intent(MotionIntent::STEP | MotionIntent::CUT),
+            )
         }
     }
 
@@ -335,6 +345,7 @@ impl DiffLook {
                 .pr(8.0)
                 .items_center()
                 .justify_end()
+                .instant_changes()
                 .child(
                     text(name)
                         .font(self.kit.ty.small_medium)
