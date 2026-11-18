@@ -1,0 +1,9 @@
+{
+  "events": [
+    {"t": 0.12, "type": "tap", "key": "file/src/lib.rs"},
+    {"t": 0.62, "type": "scroll", "x": 740, "y": 358, "dx": -400, "dy": 0, "dur": 0.2},
+    {"t": 1.22, "type": "tap", "key": "wrap"},
+    {"t": 1.82, "type": "tap", "key": "filter/committed"},
+    {"t": 2.42, "type": "tap", "key": "wrap"}
+  ]
+}

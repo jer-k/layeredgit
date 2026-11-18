@@ -27,6 +27,7 @@ fn maps_version_contents_and_preserves_rename_paths() {
     let change = |kind, binary| Change {
         kind,
         binary,
+        mode_changed: false,
         lines: None,
     };
     let version = |path: &str| repo::FileVersion {
@@ -53,9 +54,9 @@ fn maps_version_contents_and_preserves_rename_paths() {
     assert_eq!(normal.base.unwrap().path, Path::new("old"));
     assert_eq!(normal.head.unwrap().text.as_deref(), Some("hello\n"));
     assert!(normal.worktree.is_none());
-    assert_eq!(normal.placeholder, None);
+    assert_eq!(normal.placeholders, [None; 2]);
     assert_eq!(normal.committed, ChangeKind::Renamed);
-    assert_eq!(normal.uncommitted, ChangeKind::Modified);
+    assert_eq!(normal.uncommitted, ChangeKind::ModeChanged);
     for (contents, expected, message) in [
         (
             Contents::Bytes(b"bin\0ary".to_vec()),
@@ -81,7 +82,7 @@ fn maps_version_contents_and_preserves_rename_paths() {
         let version = input.worktree.unwrap();
         assert_eq!(version.path, Path::new("new"));
         assert!(version.text.is_none());
-        assert_eq!(input.placeholder, Some(expected));
+        assert_eq!(input.placeholders, [None, Some(expected)]);
         assert_eq!(expected.message(), message);
     }
     file.uncommitted.binary = true;
@@ -90,8 +91,8 @@ fn maps_version_contents_and_preserves_rename_paths() {
             &file,
             Contents::Bytes(b"text forced binary by Git".to_vec())
         )
-        .placeholder,
-        Some(Placeholder::Binary),
+        .placeholders,
+        [None, Some(Placeholder::Binary)],
     );
 }
 
@@ -120,7 +121,7 @@ fn fixture_repository_builds_a_three_way_review() {
             .position(|file| file.path() == path)
             .unwrap()
     };
-    let FileBody::Text(lib) = &review.files[find("src/lib.rs")].body else {
+    let FileBody::Text(lib) = review.files[find("src/lib.rs")].body(Filter::All) else {
         panic!("src/lib.rs should have a text diff");
     };
     for class in [
@@ -137,7 +138,10 @@ fn fixture_repository_builds_a_three_way_review() {
         );
     }
     let rename = &review.files[find("docs/CHANGELOG.md")];
-    assert_eq!(rename.path_label(), "docs/old-name.md → docs/CHANGELOG.md");
+    assert_eq!(
+        rename.path_label(Filter::All),
+        "docs/old-name.md → docs/CHANGELOG.md"
+    );
     assert_eq!(rename.committed, ChangeKind::Renamed);
     assert_eq!(
         review
@@ -150,7 +154,7 @@ fn fixture_repository_builds_a_three_way_review() {
         1
     );
     assert!(matches!(
-        &review.files[find("assets/logo.png")].body,
+        review.files[find("assets/logo.png")].body(Filter::All),
         FileBody::Placeholder(Placeholder::Binary)
     ));
 
@@ -163,12 +167,31 @@ fn fixture_repository_builds_a_three_way_review() {
     );
     assert_eq!(review.files[notes].uncommitted_counts.added, 0);
     assert_eq!(review.files[notes].uncommitted_counts.removed, 0);
+    assert_eq!(
+        review.files[notes]
+            .summary(Filter::Uncommitted)
+            .and_then(|(_, label)| label)
+            .as_deref(),
+        Some("Newline at end of file")
+    );
+    for (path, label) in [
+        ("web/reference.txt", "Renamed"),
+        ("web/setup.sh", "Mode change"),
+    ] {
+        assert_eq!(
+            review.files[find(path)]
+                .summary(Filter::Committed)
+                .and_then(|(_, label)| label)
+                .as_deref(),
+            Some(label)
+        );
+    }
 
     for path in ["TODO.md", "src/metrics.rs"] {
         let file = &review.files[find(path)];
         assert_eq!(file.committed, ChangeKind::Unchanged, "{path}");
         assert_eq!(file.uncommitted, ChangeKind::Added, "{path}");
-        let FileBody::Text(diff) = &file.body else {
+        let FileBody::Text(diff) = file.body(Filter::All) else {
             panic!("{path} should have a text diff");
         };
         assert!(!diff.lines.is_empty(), "{path}");
@@ -194,7 +217,7 @@ fn refresh_checks_the_token_and_can_force_a_reload() {
     assert!(refresh.poll(0.0, &mut tx).is_none());
     wait();
     let first = refresh.poll(0.0, &mut tx).unwrap().unwrap();
-    assert_eq!(first.files.len(), 11);
+    assert_eq!(first.files.len(), 13);
 
     fs::write(target.path.join("TODO.md"), "updated scratch notes\n").unwrap();
     assert!(refresh.poll(1.0, &mut tx).is_none());
@@ -210,7 +233,7 @@ fn refresh_checks_the_token_and_can_force_a_reload() {
         .iter()
         .find(|file| file.path() == "TODO.md")
         .unwrap();
-    let FileBody::Text(diff) = &todo.body else {
+    let FileBody::Text(diff) = todo.body(Filter::All) else {
         panic!("the refreshed untracked file should have a text diff");
     };
     assert_eq!(diff.lines[0].text, "updated scratch notes");

@@ -1,6 +1,10 @@
 //! Review interactions and the current virtual list projection.
 
+mod files;
 mod restore;
+
+pub(crate) use files::FileTree;
+use files::Sidebar;
 #[cfg(test)]
 mod tests;
 
@@ -30,11 +34,14 @@ pub(crate) struct State {
     pub(crate) filter: Filter,
     pub(crate) rows: ReviewRows,
     pub(crate) rows_version: u64,
+    pub(crate) review_version: u64,
+    pub(crate) wrap: bool,
+    sidebar: Sidebar,
     pub(crate) active_file: Option<usize>,
     pub(crate) sticky_file: Option<usize>,
     pub(crate) collapsed: HashSet<usize>,
     expanded: HashSet<(usize, usize, usize)>,
-    top_row: usize,
+    visible_rows: Range<usize>,
     navigation: Option<usize>,
     sidebar_reveal: Option<usize>,
 }
@@ -60,7 +67,11 @@ impl State {
         let collapsed = HashSet::new();
         let expanded = HashSet::new();
         let rows = ReviewRows::new(&review, filter, &collapsed, &expanded);
-        let active_file = (!review.files.is_empty()).then_some(0);
+        let active_file = rows.files.first().copied();
+        let mut sidebar = Sidebar::new(&review, filter);
+        if let Some(file) = active_file {
+            sidebar.select(file);
+        }
         Self {
             review,
             status,
@@ -69,11 +80,14 @@ impl State {
             filter,
             rows,
             rows_version: 0,
+            review_version: 0,
+            wrap: false,
+            sidebar,
             active_file,
             sticky_file: None,
             collapsed,
             expanded,
-            top_row: 0,
+            visible_rows: 0..0,
             navigation: None,
             sidebar_reveal: None,
         }
@@ -126,26 +140,26 @@ impl State {
         let old = std::mem::replace(&mut self.review, review);
         let loaded = matches!(self.status, Status::Ready { .. });
         self.status = ready();
+        self.review_version = self.review_version.wrapping_add(1);
+        self.sidebar.rebuild(&self.review, self.filter);
         if !loaded {
-            self.active_file = (!self.review.files.is_empty()).then_some(0);
             self.rebuild_rows(tx);
+            self.select_file(self.rows.files.first().copied());
             return;
         }
         // Retain both alignments for matching lines across refreshes.
         let old = self.previous_review.insert(old);
         let files = restore::match_files(old, &self.review);
         let mapped = |index: usize| files.get(index).copied().flatten();
-        let top = self.rows.rows.get(self.top_row);
-        let target = self.active_file.and_then(mapped).or_else(|| {
-            self.review
-                .files
-                .len()
-                .checked_sub(1)
-                .map(|last| self.active_file.unwrap_or(0).min(last))
-        });
+        let top = self.rows.rows.get(self.visible_rows.start);
         self.collapsed = self.collapsed.iter().copied().filter_map(mapped).collect();
         self.expanded = restore::folds(old, &self.review, &files, &self.expanded);
         let rows = ReviewRows::new(&self.review, self.filter, &self.collapsed, &self.expanded);
+        let target = self
+            .active_file
+            .and_then(mapped)
+            .filter(|&file| rows.header(file).is_some())
+            .or_else(|| rows.files.first().copied());
         if let Some(file) = target {
             let row = top
                 .filter(|row| mapped(row.file) == Some(file))
@@ -155,24 +169,24 @@ impl State {
                     restore::scroll_row(&rows, file, row, before, after)
                 });
             if let Some((index, after)) = row.or_else(|| {
-                let &index = rows.headers.get(file)?;
+                let index = rows.header(file)?;
                 rows.rows.get(index).map(|row| (index, row))
             }) {
-                let key = format!("diff-scroll/diff-rows/{}", after.key);
                 if row.is_some() && top.is_some_and(|before| before.key == after.key) {
-                    tx.keep_on_screen(key);
+                    tx.keep_on_screen(&after.key);
                 } else {
-                    tx.scroll_key_to(key, 0.0);
+                    tx.scroll_key_to(&after.key, 0.0);
                 }
-                self.top_row = index;
-                self.sticky_file = (!matches!(after.kind, RowKind::Header)).then_some(file);
+                self.visible_rows = index..index;
+                self.sticky_file = (!matches!(after.kind, RowKind::Header | RowKind::Space)
+                    && !self.collapsed.contains(&file))
+                .then_some(file);
             }
         } else {
-            self.top_row = 0;
+            self.visible_rows = 0..0;
             self.sticky_file = None;
         }
-        self.active_file = target;
-        self.sidebar_reveal = target;
+        self.select_file(target);
         self.set_rows(rows, tx);
     }
 
@@ -201,9 +215,18 @@ impl State {
             return;
         }
         self.filter = filter;
+        self.sidebar.rebuild(&self.review, filter);
         self.rebuild_rows(tx);
-        if let Some(file) = self.active_file {
+        self.sticky_file = None;
+        let target = self
+            .active_file
+            .filter(|&file| self.rows.header(file).is_some())
+            .or_else(|| self.rows.files.first().copied());
+        self.select_file(target);
+        if let Some(file) = target {
             self.jump_to_file(file, tx);
+        } else {
+            self.visible_rows = 0..0;
         }
     }
 
@@ -226,35 +249,86 @@ impl State {
     }
 
     pub(crate) fn jump_to_file(&mut self, file: usize, tx: &mut Tx) {
-        if let Some(&index) = self.rows.headers.get(file) {
+        if let Some(index) = self.rows.header(file) {
             self.jump_to_row(index, 0.0, tx);
         }
     }
 
-    /// Scrolling inside a file only updates bookkeeping. Crossing a header updates the UI.
+    /// Scrolling within a file only changes the navigation anchor.
     pub(crate) fn show_rows(&mut self, rows: Range<usize>) -> bool {
-        self.top_row = rows.start;
-        let active = self.rows.rows.get(rows.start).map(|row| row.file);
-        let sticky = self
-            .rows
-            .rows
-            .get(rows.start)
-            .filter(|row| !matches!(row.kind, RowKind::Header))
+        self.visible_rows = rows;
+        let top = self.rows.rows.get(self.visible_rows.start);
+        let active = self
+            .navigation_at_end()
+            .and_then(|index| self.rows.rows.get(index))
+            .or(top)
+            .map(|row| row.file);
+        let sticky = top
+            .filter(|row| {
+                !matches!(row.kind, RowKind::Header | RowKind::Space)
+                    && !self.collapsed.contains(&row.file)
+            })
             .map(|row| row.file);
         let file_changed = self.active_file != active;
-        let changed = file_changed || self.sticky_file != sticky;
         if file_changed {
-            self.sidebar_reveal = active;
+            self.select_file(active);
         }
-        self.active_file = active;
+        let sticky_changed = self.sticky_file != sticky;
         self.sticky_file = sticky;
-        changed
+        file_changed || sticky_changed
+    }
+
+    /// A jump to a short file near the end can stop with an earlier file at the top.
+    fn navigation_at_end(&self) -> Option<usize> {
+        self.navigation.filter(|index| {
+            self.visible_rows.end == self.rows.rows.len() && self.visible_rows.contains(index)
+        })
+    }
+
+    fn select_file(&mut self, file: Option<usize>) {
+        self.active_file = file;
+        self.sidebar_reveal = file;
+        if let Some(file) = file {
+            self.sidebar.select(file);
+        }
+    }
+
+    pub(crate) fn sidebar(&self) -> &FileTree {
+        &self.sidebar.tree
+    }
+
+    pub(crate) fn sidebar_mut(&mut self) -> &mut FileTree {
+        &mut self.sidebar.tree
+    }
+
+    pub(crate) fn sidebar_select(&mut self, id: &str, tx: &mut Tx) {
+        if let Some(file) = self.sidebar.file(id) {
+            self.jump_to_file(file, tx);
+        }
+    }
+
+    pub(crate) fn sidebar_key(&mut self, event: &KeyEvent, tx: &mut Tx) -> bool {
+        if matches!(&event.key, Key::Text(name) if matches!(name.as_str(), "j" | "k" | "[" | "]" | "r"))
+        {
+            return self.key(event, tx);
+        }
+        let (handled, file) = self.sidebar.key(event, tx);
+        if let Some(file) = file {
+            self.jump_to_file(file, tx);
+        }
+        handled
+    }
+
+    pub(crate) fn toggle_wrap(&mut self, tx: &mut Tx) {
+        self.wrap = !self.wrap;
+        tx.scroll_to_x("diff-scroll", 0.0);
+        tx.instant();
     }
 
     /// Keeps the active file visible when the sidebar is shorter than its list.
     fn reveal_sidebar(&mut self, tx: &mut Tx) {
         if let Some(file) = self.sidebar_reveal.take() {
-            tx.scroll_into_view_in("sidebar-scroll", format!("file/{file}"));
+            self.sidebar.reveal(file, tx);
         }
     }
 
@@ -276,17 +350,18 @@ impl State {
     }
 
     fn step_file(&mut self, forward: bool, tx: &mut Tx) -> bool {
-        let Some(target) = self
+        let Some(position) = self
             .active_file
-            .and_then(|file| {
-                if forward {
-                    file.checked_add(1)
-                } else {
-                    file.checked_sub(1)
-                }
-            })
-            .filter(|&file| file < self.review.files.len())
+            .and_then(|file| self.rows.files.iter().position(|&index| index == file))
         else {
+            return false;
+        };
+        let next = if forward {
+            position.checked_add(1)
+        } else {
+            position.checked_sub(1)
+        };
+        let Some(&target) = next.and_then(|next| self.rows.files.get(next)) else {
             return false;
         };
         self.jump_to_file(target, tx);
@@ -294,10 +369,12 @@ impl State {
     }
 
     fn step_hunk(&mut self, forward: bool, tx: &mut Tx) -> bool {
+        let top = self.visible_rows.start;
         let from = self
             .navigation
-            .filter(|index| index.abs_diff(self.top_row) <= 3)
-            .unwrap_or(self.top_row);
+            .filter(|index| index.abs_diff(top) <= 3)
+            .or_else(|| self.navigation_at_end())
+            .unwrap_or(top);
         let hunks = &self.rows.hunks;
         let target = if forward {
             hunks.get(hunks.partition_point(|&index| index <= from))
@@ -319,7 +396,10 @@ impl State {
             return;
         };
         self.navigation = Some(index);
-        tx.scroll_key_to(format!("diff-scroll/diff-rows/{}", row.key), at);
+        tx.scroll_key_to(&row.key, at);
+        if self.active_file != Some(row.file) {
+            self.select_file(Some(row.file));
+        }
     }
 
     fn rebuild_rows(&mut self, tx: &mut Tx) {

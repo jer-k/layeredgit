@@ -15,8 +15,8 @@ To render the fixture headlessly, run:
 
 ```sh
 scripts/make-fixture-repo.sh target/fixture-repo
-cargo run -- --repo target/fixture-repo --snap target/fixture.png --size 1400x900 --scale 2
-cargo run -- --repo target/fixture-repo --script scripts/ui/large-file-fold.json --out target/fold-frames
+cargo run -- --repo target/fixture-repo --snap target/fixture.png --chrome --size 1400x900 --scale 2
+cargo run -- --repo target/fixture-repo --script scripts/ui/large-file-fold.json --chrome --out target/fold-frames
 ```
 
 Rune is pinned to a Git revision in `Cargo.toml`. Update the dependency and its matching patches together when changing that pin.

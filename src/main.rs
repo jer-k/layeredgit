@@ -10,7 +10,7 @@ mod view;
 
 use std::{env, process};
 
-use rune::{App, AppSpec, tooling};
+use rune::{App, AppSpec, Titlebar, tooling};
 
 use state::State;
 
@@ -19,6 +19,7 @@ use state::State;
     reason = "Report command-line usage and parse failures"
 )]
 fn main() {
+    rune::prewarm_gpu();
     let options = match cli::Options::parse(env::args_os().skip(1)) {
         Ok(options) => options,
         Err(error) => {
@@ -46,6 +47,7 @@ fn main() {
             view::review,
         )
     })
+    .titlebar(Titlebar::new(view::TOOLBAR_HEIGHT))
     .args(options.tooling)
     .init(|| State::open(options.repository, tooling::headless_run().is_some()))
     .on_visibility(State::visibility);

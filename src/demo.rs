@@ -90,7 +90,7 @@ fn file(path: &str, texts: [Option<&str>; 3], layers: [ChangeKind; 2]) -> InputF
         base,
         head,
         worktree,
-        placeholder: None,
+        placeholders: [None; 2],
         committed,
         uncommitted,
     }
@@ -156,7 +156,7 @@ fn renamed_markdown() -> InputFile {
         base: Some(version("docs/review-notes.md", Some(before))),
         head: Some(version("docs/review-guide.md", Some(after))),
         worktree: Some(version("docs/review-guide.md", Some(after))),
-        placeholder: None,
+        placeholders: [None; 2],
         committed: Renamed,
         uncommitted: Unchanged,
     }
@@ -168,7 +168,7 @@ fn binary() -> InputFile {
         base: version(),
         head: version(),
         worktree: version(),
-        placeholder: Some(Placeholder::Binary),
+        placeholders: [Some(Placeholder::Binary), Some(Placeholder::Binary)],
         committed: Unchanged,
         uncommitted: Modified,
     }

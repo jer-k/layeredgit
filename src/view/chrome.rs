@@ -1,16 +1,16 @@
 use diff_stack::ThreeWayChange;
-use rune::{Cursor, El, ScrollSpec, TextStyle, col, el, row, text};
-use rune_kit::Kit;
+use rune::{ChromeInsets, Cursor, El, TextStyle, col, el, row, text};
+use rune_kit::{FileNode, Kit, Tree, TreeItem, TreeStyle};
 
 use crate::{
     input::ChangeKind,
-    model::{FileDiff, Filter},
+    model::Filter,
     state::{State, Status},
 };
 
 use super::theme::{Provenance, accent_surface, dot};
 
-pub(super) fn toolbar(state: &State, kit: &Kit) -> El {
+pub(super) fn toolbar(state: &State, kit: &Kit, insets: ChromeInsets) -> El {
     let c = &kit.c;
     let title = row()
         .items_center()
@@ -42,11 +42,13 @@ pub(super) fn toolbar(state: &State, kit: &Kit) -> El {
         );
     let toolbar = row()
         .key("toolbar")
-        .h(68.0)
-        .px(24.0)
+        .h(super::TOOLBAR_HEIGHT)
+        .pl(insets.leading + 24.0)
+        .pr(insets.trailing + 24.0)
         .items_center()
         .gap(20.0)
         .fill(c.bg_base)
+        .window_drag()
         .border_sides([0.0, 0.0, 1.0, 0.0], c.border_muted)
         .child(title);
     if matches!(&state.status, Status::Ready { .. }) {
@@ -54,6 +56,7 @@ pub(super) fn toolbar(state: &State, kit: &Kit) -> El {
             .key("comparison")
             .items_center()
             .gap(9.0)
+            .shrink()
             .min_w(0.0)
             .child(branch("Base", &state.review.base_label, false, kit))
             .child(text("→").font(kit.ty.ui).color(c.text_muted))
@@ -61,7 +64,7 @@ pub(super) fn toolbar(state: &State, kit: &Kit) -> El {
         toolbar
             .child(el().size(1.0, 24.0).fill(c.border_muted))
             .child(branches)
-            .child(el().grow(1.0))
+            .child(el().grow(1.0).h_full().window_drag())
             .child(filters(state.filter, kit))
     } else {
         toolbar
@@ -73,12 +76,14 @@ fn branch(label: &'static str, name: &str, head: bool, kit: &Kit) -> El {
     row()
         .items_center()
         .gap(7.0)
+        .shrink()
         .min_w(0.0)
         .child(text(label).font(kit.ty.text_xsmall).color(c.text_muted))
         .child(
             text(name)
                 .font(kit.ty.mono)
                 .color(if head { c.info.fg } else { c.text_base })
+                .shrink()
                 .min_w(0.0)
                 .truncate_middle()
                 .help_when_truncated(name)
@@ -131,7 +136,7 @@ fn filters(current: Filter, kit: &Kit) -> El {
         }))
 }
 
-pub(super) fn legend(kit: &Kit) -> El {
+pub(super) fn legend(state: &State, kit: &Kit) -> El {
     use ThreeWayChange::{
         CommittedAdd, CommittedDelete, CommittedThenRemoved, UncommittedAdd, UncommittedDelete,
     };
@@ -147,7 +152,7 @@ pub(super) fn legend(kit: &Kit) -> El {
         .key("legend")
         .h(56.0)
         .items_center()
-        .gap(19.0)
+        .gap(12.0)
         .child(
             text("Unified diff")
                 .font(kit.ty.body_medium)
@@ -155,21 +160,20 @@ pub(super) fn legend(kit: &Kit) -> El {
                 .single_line(),
         )
         .child(el().grow(1.0))
-        .child(legend_item(
-            marks([CommittedAdd, CommittedDelete]),
-            "Committed",
-            kit,
-        ))
-        .child(legend_item(
-            marks([UncommittedAdd, UncommittedDelete]),
-            "Uncommitted",
-            kit,
-        ))
-        .child(
-            legend_item(sample(CommittedThenRemoved, kit), "Added then removed", kit).help(
-                "Added at HEAD and removed in the working tree. H indicates a HEAD line number.",
-            ),
-        )
+        .children([
+            (state.filter != Filter::Uncommitted).then(|| legend_item(
+                marks([CommittedAdd, CommittedDelete]), "Committed", kit,
+            )),
+            (state.filter != Filter::Committed).then(|| legend_item(
+                marks([UncommittedAdd, UncommittedDelete]), "Uncommitted", kit,
+            )),
+            (state.filter == Filter::All).then(|| {
+                legend_item(sample(CommittedThenRemoved, kit), "Added then removed", kit).help(
+                    "Added at HEAD and removed in the working tree. H indicates a HEAD line number.",
+                )
+            }),
+        ].into_iter().flatten())
+        .child(wrap_toggle(state.wrap, kit))
 }
 
 fn legend_item(mark: El, label: &'static str, kit: &Kit) -> El {
@@ -204,16 +208,82 @@ fn sample(change: ThreeWayChange, kit: &Kit) -> El {
     }
 }
 
+fn wrap_toggle(wrap: bool, kit: &Kit) -> El {
+    row()
+        .key("wrap")
+        .role("checkbox")
+        .label("Wrap lines")
+        .checked(wrap)
+        .focusable(true)
+        .h(30.0)
+        .px(9.0)
+        .items_center()
+        .radius(kit.radius.md)
+        .fill(if wrap {
+            accent_surface(kit)
+        } else {
+            kit.c.bg_base
+        })
+        .border(
+            1.0,
+            if wrap {
+                kit.c.info.border
+            } else {
+                kit.c.border_muted
+            },
+        )
+        .hover(kit.c.hover)
+        .press(kit.c.pressed)
+        .cursor(Cursor::Pointer)
+        .child(
+            text("Wrap")
+                .font(kit.ty.text_xsmall_medium)
+                .color(if wrap { kit.c.info.fg } else { kit.c.text_base })
+                .single_line(),
+        )
+        .on_press_tx(State::toggle_wrap)
+}
+
 pub(super) fn sidebar(state: &State, kit: &Kit) -> El {
     let c = &kit.c;
-    let list = col().key("file-list").padding(11.0).gap(4.0).children(
-        state
-            .review
-            .files
-            .iter()
-            .enumerate()
-            .map(|(index, file)| file_item(index, file, state.active_file == Some(index), kit)),
-    );
+    let mut style = TreeStyle::from_kit(kit).gap(7.0).radius(kit.radius.md);
+    style.row_height = 32.0;
+    style.indent = 15.0;
+    style.padding = 9.0;
+    style.selected = accent_surface(kit);
+    let row_kit = kit.clone();
+    let list = Tree::new(State::sidebar, State::sidebar_mut, FileNode::label)
+        .name("Changed files")
+        .style(style)
+        .row(move |node, row| {
+            let item = TreeItem::file(node, row);
+            let Some(badge) = &node.data else { return item };
+            let c = &row_kit.c;
+            let (glyph, surface, ink) = match badge.kind {
+                ChangeKind::Added => ("A", c.success.bg, c.success.fg),
+                ChangeKind::Deleted => ("D", c.danger.bg, c.danger.fg),
+                ChangeKind::Renamed => ("R", accent_surface(&row_kit), c.info.fg),
+                _ => ("M", c.layer_01, c.text_muted),
+            };
+            let item = if badge.working {
+                item.dot(c.info.icon)
+            } else {
+                item
+            };
+            item.trailing(
+                el().size(22.0, 21.0)
+                    .center()
+                    .radius(row_kit.radius.sm)
+                    .fill(surface)
+                    .child(text(glyph).font(row_kit.ty.mono).color(ink)),
+            )
+        })
+        .on_select(State::sidebar_select)
+        .build(state, kit)
+        .on_key(State::sidebar_key)
+        .grow(1.0)
+        .min_h(0.0)
+        .padding(9.0);
     col()
         .key("sidebar")
         .w(266.0)
@@ -233,7 +303,7 @@ pub(super) fn sidebar(state: &State, kit: &Kit) -> El {
                         .color(c.text_base),
                 )
                 .child(
-                    text(state.review.files.len().to_string())
+                    text(state.rows.files.len().to_string())
                         .font(kit.ty.mono)
                         .color(c.text_muted)
                         .px(7.0)
@@ -241,99 +311,8 @@ pub(super) fn sidebar(state: &State, kit: &Kit) -> El {
                         .fill(c.layer_01),
                 ),
         )
-        .child(
-            col()
-                .key("sidebar-scroll")
-                .grow(1.0)
-                .min_h(0.0)
-                .scroll(ScrollSpec {
-                    stick_bottom: false,
-                })
-                .child(list),
-        )
+        .child(list)
         .child(shortcuts(kit, state.can_refresh()))
-}
-
-fn file_item(index: usize, file: &FileDiff, selected: bool, kit: &Kit) -> El {
-    let c = &kit.c;
-    let path = file.path();
-    let (directory, name) = path.rsplit_once('/').unwrap_or(("", &path));
-    let mut title = col().grow(1.0).min_w(0.0).gap(2.0).child(
-        text(name)
-            .font(kit.ty.ui_medium)
-            .color(c.text_base)
-            .truncate_middle(),
-    );
-    if !directory.is_empty() {
-        title = title.child(
-            text(directory)
-                .font(kit.ty.small)
-                .color(c.text_muted)
-                .truncate_middle(),
-        );
-    }
-    let kind = if file.uncommitted == ChangeKind::Unchanged {
-        file.committed
-    } else {
-        file.uncommitted
-    };
-    let (badge, tint, ink) = match kind {
-        ChangeKind::Added => ("A", c.success.bg, c.success.fg),
-        ChangeKind::Deleted => ("D", c.danger.bg, c.danger.fg),
-        ChangeKind::Renamed => ("R", accent_surface(kit), c.info.fg),
-        ChangeKind::Modified => ("M", c.layer_01, c.text_muted),
-        ChangeKind::Unchanged => ("", c.bg_base, c.text_muted),
-    };
-    row()
-        .key(format!("file/{index}"))
-        .role("button")
-        .label(if selected {
-            format!("{path}, in view")
-        } else {
-            path.into_owned()
-        })
-        .focusable(true)
-        .h(46.0)
-        .pl(10.0)
-        .pr(9.0)
-        .gap(9.0)
-        .items_center()
-        .radius(kit.radius.lg)
-        .fill(if selected {
-            accent_surface(kit)
-        } else {
-            c.bg_base
-        })
-        .border(
-            1.0,
-            if selected {
-                c.info.border
-            } else {
-                rune::Color::TRANSPARENT
-            },
-        )
-        .hover(c.hover)
-        .press(c.pressed)
-        .cursor(Cursor::Pointer)
-        .child(el().size(3.0, 17.0).radius(1.5).fill(if selected {
-            c.info.icon
-        } else {
-            rune::Color::TRANSPARENT
-        }))
-        .child(title)
-        .child(if file.uncommitted == ChangeKind::Unchanged {
-            el().w(5.0)
-        } else {
-            dot(kit, 5.0)
-        })
-        .child(
-            el().size(22.0, 21.0)
-                .center()
-                .radius(kit.radius.sm)
-                .fill(tint)
-                .child(text(badge).font(kit.ty.mono).color(ink)),
-        )
-        .on_press_tx(move |state: &mut State, tx| state.jump_to_file(index, tx))
 }
 
 fn shortcuts(kit: &Kit, can_refresh: bool) -> El {

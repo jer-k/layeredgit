@@ -2,7 +2,8 @@
 # Build a throwaway git repo that exercises every kind of change the viewer shows:
 # committed vs uncommitted edits (all six line classes), a base branch that moved on
 # after the branch point, a rename, an added / deleted / untracked / binary file, a
-# trailing-newline-only change, several languages, and one large file.
+# trailing-newline-only change, a pure rename and a mode change, several languages,
+# and one large file.
 #
 # Usage: scripts/make-fixture-repo.sh [dir]   (default: target/fixture-repo)
 # Then:  cargo run -- --repo target/fixture-repo
@@ -102,6 +103,8 @@ EOF
 
 printf 'legacy settings\nmode = fast\n' > legacy.ini
 printf 'no trailing newline yet\n' > notes.txt
+printf 'Reference for the web client.\n' > web/old-reference.txt
+printf '#!/bin/sh\nprintf "Ready\\n"\n' > web/setup.sh
 
 # A large file with scattered edits later on.
 i=1
@@ -178,6 +181,9 @@ EOF
 
 git mv docs/old-name.md docs/CHANGELOG.md
 printf '\n## 0.2.0\n\n- Jitter in backoff.\n' >> docs/CHANGELOG.md
+git mv web/old-reference.txt web/reference.txt
+chmod +x web/setup.sh
+git update-index --chmod=+x web/setup.sh
 git rm -q legacy.ini
 printf '\000\000\000\002IDAT\001' >> assets/logo.png
 cat > src/config.rs <<'EOF'

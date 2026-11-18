@@ -70,10 +70,6 @@ pub(super) fn folds(
         let Some(after) = new.files.get(index) else {
             continue;
         };
-        let (FileBody::Text(old_text), FileBody::Text(new_text)) = (&before.body, &after.body)
-        else {
-            continue;
-        };
         let Some((first, last)) = end.checked_sub(1).and_then(|last| {
             after
                 .relocated_line(before, start)
@@ -82,6 +78,11 @@ pub(super) fn folds(
             continue;
         };
         for filter in Filter::ALL {
+            let (FileBody::Text(old_text), FileBody::Text(new_text)) =
+                (before.body(filter), after.body(filter))
+            else {
+                continue;
+            };
             if old_text.gaps(filter).any(|gap| gap == (start..end)) {
                 restored.extend(
                     new_text
@@ -103,15 +104,11 @@ pub(super) fn scroll_row<'a>(
     before: &FileDiff,
     after: &FileDiff,
 ) -> Option<(usize, &'a ReviewRow)> {
-    let start = *rows.headers.get(file)?;
-    let end = rows
-        .headers
-        .get(file + 1)
-        .copied()
-        .unwrap_or(rows.rows.len());
+    let range = rows.file_rows_range(file)?;
+    let start = range.start;
     let mut candidates = rows
         .rows
-        .get(start..end)?
+        .get(range)?
         .iter()
         .enumerate()
         .map(|(i, row)| (start + i, row));
@@ -125,7 +122,10 @@ pub(super) fn scroll_row<'a>(
             .find(|(_, row)| matches!(row.kind, RowKind::Newline(candidate) if label == candidate)),
         RowKind::Line(index)
         | RowKind::Hunk { start: index, .. }
-        | RowKind::Fold(std::ops::Range { start: index, .. }) => {
+        | RowKind::Fold {
+            range: std::ops::Range { start: index, .. },
+            ..
+        } => {
             let index = after.relocated_line(before, index)?;
             candidates
                 .filter_map(|(i, row)| {
@@ -133,7 +133,9 @@ pub(super) fn scroll_row<'a>(
                         RowKind::Line(line) | RowKind::Hunk { start: line, .. } => {
                             index.abs_diff(*line)
                         }
-                        RowKind::Fold(gap) => index.abs_diff(index.clamp(gap.start, gap.end - 1)),
+                        RowKind::Fold { range: gap, .. } => {
+                            index.abs_diff(index.clamp(gap.start, gap.end - 1))
+                        }
                         _ => return None,
                     };
                     let different_kind =
