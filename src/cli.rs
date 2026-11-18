@@ -9,7 +9,7 @@ use std::{
 use crate::source::Repository;
 
 pub(crate) const USAGE: &str =
-    "Usage: git-viewer-rune [--repo PATH] [--base REF] [--demo] [Rune options]";
+    "Usage: git-viewer-rune [--repo PATH] [--base REF] [--demo] [--demo-pulse] [Rune options]";
 
 pub(crate) struct Options {
     /// Absent in demo mode.
@@ -47,7 +47,7 @@ impl Options {
                     }
                 }
                 b"--demo" if inline.is_none() => demo = true,
-                b"--demo-pulse" if cfg!(debug_assertions) && inline.is_none() => demo_pulse = true,
+                b"--demo-pulse" if inline.is_none() => demo_pulse = true,
                 _ => {
                     tooling.push(arg.into_string().map_err(|arg| {
                         format!("Rune arguments must be UTF-8: {}", arg.display())

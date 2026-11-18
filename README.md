@@ -9,7 +9,8 @@ override the default base (origin/HEAD, main, or master). Pass `--demo` for the
 built-in example.
 
 The review follows filesystem changes and checks Git status periodically. Press
-`r` to refresh immediately.
+`r` to refresh immediately. While the fresh-line highlight is active, press `p`
+or `n` to jump to the nearest off-screen edit above or below.
 
 To render the fixture headlessly, run:
 
@@ -18,6 +19,9 @@ scripts/make-fixture-repo.sh target/fixture-repo
 cargo run -- --repo target/fixture-repo --snap target/fixture.png --chrome --size 1400x900 --scale 2
 cargo run -- --repo target/fixture-repo --script scripts/ui/large-file-fold.json --chrome --out target/fold-frames
 ```
+
+Add `--scene reduced-motion` to any headless capture to exercise Reduce Motion.
+Use `--demo-pulse` to simulate a reload at 0.5 seconds on the fixture.
 
 ### Tune the diff colours
 

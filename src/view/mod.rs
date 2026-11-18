@@ -18,6 +18,9 @@ pub(crate) const TOOLBAR_HEIGHT: f32 = 68.0;
 
 /// Draws the application in the current system appearance.
 pub(crate) fn review(state: &State, cx: &mut Cx<State>) -> El {
+    if state.headless_reduced_motion {
+        cx.reduced_motion(true);
+    }
     let kit = Kit::neutral(cx.env().system_dark);
     cx.caption_color(kit.c.text_base);
     let palette = state.palette(kit.dark);

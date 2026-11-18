@@ -304,20 +304,86 @@ fn reduced_motion_pulse_fades_in_place_and_goes_idle() {
 }
 
 #[test]
+fn offscreen_pulse_jumps_to_the_closest_edit() {
+    use rune::{Env, Mods, Runtime, motion_gate::Run};
+
+    let (_directory, repository) = crate::source::tests::fixture();
+    let settle = |runtime: &mut Runtime<State>, frames| {
+        for _ in 0..frames {
+            runtime.frame(1.0 / 60.0);
+        }
+    };
+    for (start, chip) in [
+        ("file/src/lib.rs", "pulse-offscreen/above"),
+        ("file/src/config.rs", "pulse-offscreen/below"),
+    ] {
+        let state = State::open(Some(repository.clone()), true, true);
+        let mut runtime = Runtime::new(
+            state,
+            crate::view::review,
+            (1400.0, 900.0),
+            Env::new(true, 1.0),
+        );
+        runtime.on_key = Some(State::key);
+        runtime.poll = Some(State::poll);
+        settle(&mut runtime, 12);
+        Run::tap(&mut runtime, start);
+        settle(&mut runtime, 30);
+        assert!(runtime.find(chip).is_some());
+
+        if chip.ends_with("above") {
+            Run::tap(&mut runtime, chip);
+        } else {
+            runtime.key(KeyEvent {
+                key: Key::Text("n".into()),
+                mods: Mods::default(),
+            });
+        }
+        settle(&mut runtime, 8);
+
+        let file = runtime.state.active_file.unwrap();
+        let generated = &runtime.state.review.files[file];
+        assert_eq!(generated.path(), "src/generated.rs");
+        let FileBody::Text(diff) = generated.body(Filter::All) else {
+            unreachable!("the generated fixture is text");
+        };
+        let line = diff
+            .lines
+            .iter()
+            .position(|line| line.worktree == Some(4200))
+            .unwrap();
+        let elements = runtime.elements();
+        let top = |key: &str| {
+            elements
+                .iter()
+                .find(|element| element.key.as_deref() == Some(key))
+                .unwrap()
+                .rect[1]
+        };
+        let row_top = top(&format!("line/{file}/{line}"));
+        assert!((row_top - top("diff-scroll") - HEADER_HEIGHT).abs() < 1.0);
+        assert_eq!(runtime.state.pulse_offscreen(), (0, 0));
+        assert!(runtime.find("pulse-offscreen").is_none());
+    }
+}
+
+#[test]
 fn filter_motion_gate() {
     use rune::{Env, Runtime, motion_gate::Run};
 
     for reduced in [false, true] {
         let mut input = crate::demo::review();
         input.files.truncate(1);
-        let state = State::new(Review::new(input), ready(), None);
-        let mut runtime = Runtime::new(
+        let mut state = State::new(Review::new(input), ready(), None);
+        if reduced {
+            state.force_reduced_motion();
+        }
+        let runtime = Runtime::new(
             state,
             crate::view::review,
             (1240.0, 820.0),
             Env::new(true, 1.0),
         );
-        runtime.set_system_reduced_motion(reduced);
         let mut run = Run::new(runtime, 60.0);
         run.idle(0.2);
         run.step();
@@ -336,7 +402,18 @@ fn filter_motion_gate() {
                 .collect::<Vec<_>>()
         };
         let before = lines(&run.rt);
+        let head_only = |element: &rune::ElementInfo| {
+            element.path.contains("/gutter/new-number/")
+                && element
+                    .text
+                    .as_deref()
+                    .is_some_and(|text| text.starts_with('H'))
+                && element.opacity > 0.01
+                && element.visible[3] > 0.0
+        };
+        assert!(run.rt.elements().iter().any(head_only));
         run.act("tap Committed", |rt| Run::tap(rt, "filter/committed"));
+        assert!(!run.rt.elements().iter().any(head_only));
         run.play(0.8);
         run.quiet();
         run.play(0.15);

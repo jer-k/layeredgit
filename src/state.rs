@@ -6,6 +6,7 @@ mod restore;
 
 pub(crate) use files::FileTree;
 use files::Sidebar;
+pub(crate) use pulse::PulseDirection;
 #[cfg(test)]
 mod tests;
 
@@ -33,6 +34,7 @@ pub(crate) struct State {
     pub(crate) status: Status,
     refresh: Option<Refresh>,
     demo_reload: Option<Replacement>,
+    pub(crate) headless_reduced_motion: bool,
     pub(crate) pulse: pulse::Pulse,
     system_dark: Cell<bool>,
     #[cfg(feature = "dev")]
@@ -92,6 +94,7 @@ impl State {
             status,
             refresh,
             demo_reload: None,
+            headless_reduced_motion: false,
             pulse: pulse::Pulse::default(),
             system_dark: Cell::default(),
             #[cfg(feature = "dev")]
@@ -114,6 +117,10 @@ impl State {
 
     pub(crate) fn can_refresh(&self) -> bool {
         self.refresh.is_some()
+    }
+
+    pub(crate) fn force_reduced_motion(&mut self) {
+        self.headless_reduced_motion = true;
     }
 
     /// Shares the current system appearance with the pulse timer.
@@ -395,7 +402,7 @@ impl State {
     }
 
     pub(crate) fn sidebar_key(&mut self, event: &KeyEvent, tx: &mut Tx) -> bool {
-        if matches!(&event.key, Key::Text(name) if matches!(name.as_str(), "j" | "k" | "[" | "]" | "r"))
+        if matches!(&event.key, Key::Text(name) if matches!(name.as_str(), "j" | "k" | "[" | "]" | "p" | "n" | "r"))
         {
             return self.key(event, tx);
         }
@@ -433,6 +440,8 @@ impl State {
                 "k" => self.step_hunk(false, tx),
                 "]" => self.step_file(true, tx),
                 "[" => self.step_file(false, tx),
+                "p" => self.jump_to_pulse(PulseDirection::Above, tx),
+                "n" => self.jump_to_pulse(PulseDirection::Below, tx),
                 "r" => self.request_refresh(tx),
                 _ => false,
             },
@@ -508,6 +517,14 @@ impl State {
 
     pub(crate) fn pulse_offscreen(&self) -> (usize, usize) {
         self.pulse.offscreen(&self.visible_rows)
+    }
+
+    pub(crate) fn jump_to_pulse(&mut self, direction: PulseDirection, tx: &mut Tx) -> bool {
+        let Some(index) = self.pulse.nearest(&self.visible_rows, direction) else {
+            return false;
+        };
+        self.jump_to_row(index, HEADER_HEIGHT, tx);
+        true
     }
 }
 

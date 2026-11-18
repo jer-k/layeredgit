@@ -9,6 +9,13 @@ use crate::model::{
     fresh::{self, FreshLines},
 };
 
+/// Direction from the current viewport to fresh lines.
+#[derive(Clone, Copy)]
+pub(crate) enum PulseDirection {
+    Above,
+    Below,
+}
+
 pub(crate) struct Pulse {
     lines: FreshLines,
     rows: Vec<usize>,
@@ -118,12 +125,34 @@ impl Pulse {
     }
 
     pub(super) fn offscreen(&self, visible: &Range<usize>) -> (usize, usize) {
+        let (above, below) = self.offscreen_rows(visible);
+        (above.len(), below.len())
+    }
+
+    pub(super) fn nearest(
+        &self,
+        visible: &Range<usize>,
+        direction: PulseDirection,
+    ) -> Option<usize> {
+        let (above, below) = self.offscreen_rows(visible);
+        match direction {
+            PulseDirection::Above => above.last(),
+            PulseDirection::Below => below.first(),
+        }
+        .copied()
+    }
+
+    fn offscreen_rows(&self, visible: &Range<usize>) -> (&[usize], &[usize]) {
         if visible.is_empty() {
-            return (0, 0);
+            return (&[], &[]);
         }
         (
-            self.rows.partition_point(|&row| row < visible.start),
-            self.rows.len() - self.rows.partition_point(|&row| row < visible.end),
+            self.rows
+                .split_at(self.rows.partition_point(|&row| row < visible.start))
+                .0,
+            self.rows
+                .split_at(self.rows.partition_point(|&row| row < visible.end))
+                .1,
         )
     }
 }

@@ -360,19 +360,24 @@ fn shortcuts(kit: &Kit, can_refresh: bool) -> El {
                     .pl(2.0),
             )
     };
-    let list = row()
-        .key("shortcuts")
-        .h(43.0)
-        .px(19.0)
-        .gap(12.0)
-        .items_center()
-        .border_sides([1.0, 0.0, 0.0, 0.0], c.border_muted)
-        .child(shortcut(&["j", "k"], "Hunks"))
-        .child(shortcut(&["[", "]"], "Files"));
-    if can_refresh {
-        list.child(shortcut(&["r"], "Refresh"))
+    let edits = row().gap(12.0).child(shortcut(&["p", "n"], "New edits"));
+    let edits = if can_refresh {
+        edits.child(shortcut(&["r"], "Refresh"))
     } else {
-        list
-    }
+        edits
+    };
+    col()
+        .key("shortcuts")
+        .px(19.0)
+        .py(9.0)
+        .gap(5.0)
+        .border_sides([1.0, 0.0, 0.0, 0.0], c.border_muted)
+        .child(
+            row()
+                .gap(12.0)
+                .child(shortcut(&["j", "k"], "Hunks"))
+                .child(shortcut(&["[", "]"], "Files")),
+        )
+        .child(edits)
 }
 use std::collections::HashSet;
