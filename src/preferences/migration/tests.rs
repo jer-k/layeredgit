@@ -89,6 +89,14 @@ mod native {
     impl Drop for Domain {
         fn drop(&mut self) {
             let _ = defaults().args(["delete", &self.0]).output();
+            // `defaults delete` empties the domain but leaves its plist behind in the
+            // user's real Preferences folder; remove it so test runs leave no trace.
+            if let Some(home) = std::env::var_os("HOME") {
+                let plist = Path::new(&home)
+                    .join("Library/Preferences")
+                    .join(format!("{}.plist", self.0));
+                let _ = fs::remove_file(plist);
+            }
         }
     }
 
