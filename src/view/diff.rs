@@ -75,6 +75,10 @@ pub(super) fn pane(state: &State, kit: &Kit, palette: Palette, viewport_width: f
         .min_h(0.0)
         .scroll(ScrollSpec {
             stick_bottom: false,
+        })
+        .on_scroll_offset({
+            let position = Rc::clone(&state.scroll_position);
+            move |at| position.set(at.offset)
         });
     let scroll = if horizontal {
         scroll.scroll_xy()

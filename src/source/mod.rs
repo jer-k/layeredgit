@@ -1,7 +1,7 @@
 //! Reads the three Git versions used by the review.
 
 use std::{
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     path::{Path, PathBuf},
 };
 
@@ -11,7 +11,7 @@ use crate::input::{ChangeKind, FileVersion, InputFile, Placeholder, ReviewInput}
 
 mod refresh;
 mod watch;
-pub(crate) use refresh::Refresh;
+pub(crate) use refresh::{Refresh, RefreshEvent};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Repository {
@@ -22,48 +22,87 @@ pub(crate) struct Repository {
 #[derive(PartialEq, Eq)]
 struct Comparison {
     base: OsString,
+    head_label: String,
     revisions: Revisions,
+}
+
+pub(crate) fn ref_label(reference: &OsStr) -> String {
+    let label = reference.to_string_lossy();
+    label
+        .strip_prefix("refs/heads/")
+        .or_else(|| label.strip_prefix("refs/remotes/"))
+        .unwrap_or(&label)
+        .to_owned()
 }
 
 impl Repository {
     /// Builds the input using the merge base, HEAD, and the live working tree.
     pub(crate) fn load_input(&self) -> Result<ReviewInput, Error> {
+        self.preview(None).map(|(input, _)| input)
+    }
+
+    pub(crate) fn preview(&self, head: Option<&OsStr>) -> Result<(ReviewInput, bool), Error> {
         let repo = Repo::open(&self.path)?;
-        let comparison = self.comparison(&repo)?;
-        self.read_input(repo, &comparison)
+        let comparison = self.comparison(&repo, head)?;
+        let worktree = comparison.revisions.worktree().is_some();
+        Ok((Self::read_input(repo, &comparison)?, worktree))
     }
 
-    fn comparison(&self, repo: &Repo) -> Result<Comparison, Error> {
+    pub(crate) fn validate(&self, head: Option<&OsStr>) -> Result<(), Error> {
+        let repo = Repo::open(&self.path)?;
+        let comparison = self.comparison(&repo, head)?;
+        if comparison.revisions.head().is_none()
+            && let Some(base) = &self.base
+        {
+            repo.resolve(base)?;
+        }
+        Ok(())
+    }
+
+    fn comparison(&self, repo: &Repo, head: Option<&OsStr>) -> Result<Comparison, Error> {
         let base = match &self.base {
-            Some(base) => base.clone(),
-            None => repo.default_base()?,
+            Some(base) => Some(base.clone()),
+            None => match repo.default_base() {
+                Ok(base) => Some(base),
+                Err(Error::NoDefaultBase) => None,
+                Err(error) => return Err(error),
+            },
         };
-        let revisions = repo.revisions(Some(&base))?;
-        Ok(Comparison { base, revisions })
+        let revisions = repo.compare(base.as_deref(), head)?;
+        let head_label = match head {
+            Some(head) => ref_label(head),
+            None => ref_label(&repo.head_name()?),
+        };
+        Ok(Comparison {
+            base: base.unwrap_or_else(|| "Default".into()),
+            head_label,
+            revisions,
+        })
     }
 
-    fn read_input(&self, mut repo: Repo, comparison: &Comparison) -> Result<ReviewInput, Error> {
-        let Comparison { base, revisions } = comparison;
-        let base_label = base.to_string_lossy();
-        let base_label = if self.base.is_some() {
-            &base_label
-        } else {
-            base_label
-                .strip_prefix("refs/heads/")
-                .or_else(|| base_label.strip_prefix("refs/remotes/"))
-                .unwrap_or(&base_label)
-        };
-        let head_label = repo.head_name()?.to_string_lossy().into_owned();
+    fn read_input(mut repo: Repo, comparison: &Comparison) -> Result<ReviewInput, Error> {
+        let Comparison {
+            base,
+            head_label,
+            revisions,
+        } = comparison;
         let files = repo
             .changed_files(revisions)?
             .into_iter()
-            .map(|file| convert_file(&file, |layer| repo.read(revisions, &file, layer)))
+            .map(|file| {
+                let mut input = convert_file(&file, |layer| repo.read(revisions, &file, layer))?;
+                if revisions.worktree().is_none() {
+                    input.worktree.clone_from(&input.head);
+                    input.placeholders[1] = None;
+                }
+                Ok::<_, Error>(input)
+            })
             .collect::<Result<_, _>>()?;
         Ok(ReviewInput {
-            base_label: base_label.into(),
+            base_label: ref_label(base),
             base_revision: [revisions.base_tip(), revisions.merge_base()]
                 .map(|id| id.map(str::to_owned)),
-            head_label,
+            head_label: head_label.clone(),
             files,
         })
     }

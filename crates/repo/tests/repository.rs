@@ -65,6 +65,112 @@ fn isolated(name: &str) -> bool {
     false
 }
 
+test_case!(lists_local_and_remote_branches, {
+    let fixture = Fixture::new();
+    fixture.write("file", b"base\n");
+    fixture.commit("base");
+    fixture.git(&["branch", "topic/ümlaut"]);
+    git_in(&fixture.root, &["clone", ".", "../clone"], b"");
+    let clone = Repo::open(fixture.directory.path().join("clone")).unwrap();
+    let branches = clone.branches().unwrap();
+    let local = branches.iter().find(|branch| branch.is_current).unwrap();
+    assert_eq!(local.name, "main");
+    assert_eq!(
+        local.upstream.as_deref(),
+        Some(OsStr::new("refs/remotes/origin/main"))
+    );
+    let remote = branches
+        .iter()
+        .find(|branch| branch.name == "origin/topic/ümlaut")
+        .unwrap();
+    assert!(remote.is_remote);
+    assert_eq!(remote.tip, local.tip);
+    assert!(!branches.iter().any(|branch| branch.name == "origin/HEAD"));
+    fs::write(clone.root().join("dirty"), b"local only\n").unwrap();
+    let revisions = clone.compare(None, Some(&remote.reference)).unwrap();
+    assert_eq!(revisions.worktree(), None);
+    assert_eq!(clone.changed_files(&revisions).unwrap(), []);
+});
+
+test_case!(
+    compares_selected_branch_tag_and_sha_with_the_correct_layer,
+    {
+        let fixture = Fixture::new();
+        fixture.write("tracked", b"base\n");
+        fixture.commit("base");
+        let other = fixture.directory.path().join("linked\nworktree");
+        fixture.git(&["worktree", "add", "-b", "topic", other.to_str().unwrap()]);
+        fs::write(other.join("tracked"), b"committed\n").unwrap();
+        git_in(&other, &["commit", "-am", "topic"], b"");
+        git_in(&other, &["branch", "parked"], b"");
+        git_in(&other, &["tag", "-a", "v1", "-m", "tagged"], b"");
+        fs::write(other.join("tracked"), b"linked edit\n").unwrap();
+        fs::write(other.join("untracked"), b"linked new file\n").unwrap();
+        fixture.write("untracked-at-origin", b"not in the comparison\n");
+
+        let mut repo = fixture.open();
+        let linked = repo.compare(None, Some(OsStr::new("topic"))).unwrap();
+        assert_eq!(linked.worktree().unwrap(), other.canonicalize().unwrap());
+        assert!(repo.worktrees().unwrap().iter().any(|tree| {
+            tree.path == linked.worktree().unwrap()
+                && tree.branch.as_deref() == Some(OsStr::new("refs/heads/topic"))
+        }));
+        let files = repo.changed_files(&linked).unwrap();
+        let tracked = files
+            .iter()
+            .find(|file| file.path() == Some(Path::new("tracked")))
+            .unwrap();
+        assert_eq!(
+            repo.read(&linked, tracked, Layer::Head).unwrap(),
+            Contents::Bytes(b"committed\n".to_vec())
+        );
+        assert_eq!(
+            repo.read(&linked, tracked, Layer::Worktree).unwrap(),
+            Contents::Bytes(b"linked edit\n".to_vec())
+        );
+        assert_eq!(files.len(), 2);
+        assert!(
+            files
+                .iter()
+                .any(|file| file.path() == Some(Path::new("untracked")))
+        );
+        assert!(
+            Repo::open(&other)
+                .unwrap()
+                .change_token()
+                .unwrap()
+                .is_dirty()
+        );
+
+        let sha = repo.resolve(OsStr::new("v1")).unwrap();
+        for revision in ["parked", "v1", sha.as_str()] {
+            let revisions = repo.compare(None, Some(OsStr::new(revision))).unwrap();
+            assert_eq!(revisions.head(), Some(sha.as_str()));
+            assert_eq!(revisions.worktree(), None);
+            let files = repo.changed_files(&revisions).unwrap();
+            assert_eq!(files.len(), 1);
+            for file in &files {
+                assert_eq!(file.uncommitted.kind, ChangeKind::None);
+                assert_eq!(file.worktree, None);
+                assert_eq!(
+                    repo.read(&revisions, file, Layer::Worktree).unwrap(),
+                    Contents::Missing
+                );
+            }
+        }
+        for revision in ["missing", "--all"] {
+            assert!(matches!(
+                repo.compare(None, Some(OsStr::new(revision))),
+                Err(Error::InvalidRevision(_))
+            ));
+            assert!(matches!(
+                repo.compare(Some(OsStr::new(revision)), None),
+                Err(Error::InvalidRevision(_))
+            ));
+        }
+    }
+);
+
 struct Fixture {
     directory: tempfile::TempDir,
     root: PathBuf,
@@ -537,7 +643,7 @@ test_case!(defaults_prefer_origin_then_main_then_master, {
     fixture.git(&["branch", "-D", "master"]);
     assert!(matches!(repo.default_base(), Err(Error::NoDefaultBase)));
     let error = repo.revisions(Some(OsStr::new("--invalid"))).unwrap_err();
-    assert!(matches!(error, Error::Git { stderr, .. } if !stderr.is_empty()));
+    assert!(matches!(error, Error::InvalidRevision(revision) if revision == "--invalid"));
 });
 
 test_case!(discovers_from_a_file_and_reports_not_a_repo, {

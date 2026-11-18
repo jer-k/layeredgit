@@ -3,6 +3,7 @@
 mod files;
 mod pulse;
 mod restore;
+mod workspace;
 
 pub(crate) use files::FileTree;
 use files::Sidebar;
@@ -10,30 +11,35 @@ pub(crate) use pulse::PulseDirection;
 #[cfg(test)]
 mod tests;
 
-use std::{cell::Cell, collections::HashSet, ffi::OsString, ops::Range, sync::Arc};
+use std::{cell::Cell, collections::HashSet, ops::Range, rc::Rc, sync::Arc};
 
 use rune::{Key, KeyEvent, Tx, Waker};
 
 use crate::{
-    desktop::{ReviewSession, open_shortcut},
     model::{Filter, Review, ReviewRows, RowKind, fresh::Replacement},
     palette::Palette,
-    source::{Refresh, Repository},
+    repositories::{Visibility, Workspace},
+    source::{Refresh, RefreshEvent, Repository},
 };
 
 pub(crate) const HEADER_HEIGHT: f32 = 44.0;
 
 /// Loading and error messages for the initial review or a live refresh.
 pub(crate) enum Status {
+    Empty,
     Loading,
+    Changing,
     Failed(String),
     Ready { refresh_error: Option<String> },
 }
 
 pub(crate) struct State {
-    pub(crate) session: Option<ReviewSession>,
+    pub(crate) workspace: Option<Workspace>,
     pub(crate) review: Arc<Review>,
     pub(crate) status: Status,
+    pub(crate) has_worktree: bool,
+    previous_live_filter: Filter,
+    pub(crate) scroll_position: Rc<Cell<[f32; 2]>>,
     refresh: Option<Refresh>,
     demo_reload: Option<Replacement>,
     pub(crate) headless_reduced_motion: bool,
@@ -92,9 +98,12 @@ impl State {
             sidebar.select(file);
         }
         Self {
-            session: None,
+            workspace: None,
             review: Arc::new(review),
             status,
+            has_worktree: true,
+            previous_live_filter: Filter::All,
+            scroll_position: Rc::default(),
             refresh,
             demo_reload: None,
             headless_reduced_motion: false,
@@ -136,12 +145,22 @@ impl State {
     }
 
     pub(crate) fn setup(&mut self, waker: Waker) {
+        if let Some(workspace) = &mut self.workspace {
+            workspace.waker = Some(Arc::clone(&waker));
+        }
         if let Some(refresh) = &mut self.refresh {
             refresh.setup(waker);
         }
     }
 
     pub(crate) fn visibility(&mut self, visible: bool, tx: &mut Tx) {
+        if let Some(workspace) = &mut self.workspace {
+            workspace.window = if visible {
+                Visibility::Shown
+            } else {
+                Visibility::Hidden
+            };
+        }
         if let Some(refresh) = &mut self.refresh {
             refresh.visibility(visible, tx);
         }
@@ -158,27 +177,9 @@ impl State {
         }
     }
 
-    pub(crate) fn title(&mut self, tx: &mut Tx) {
-        if let Some(session) = &mut self.session {
-            session.set_title(None, tx);
-        }
-    }
-
-    pub(crate) fn set_base(&mut self, base: OsString, tx: &mut Tx) {
-        if let Some(refresh) = &mut self.refresh {
-            refresh.set_base(base, tx);
-        }
-    }
-
-    pub(crate) fn close(&mut self, _: &mut Tx) {
-        self.refresh = None;
-        if let Some(session) = &self.session {
-            session.close();
-        }
-    }
-
     pub(crate) fn poll(&mut self, now: f64, tx: &mut Tx) -> bool {
         self.reveal_sidebar(tx);
+        self.inspect_open_picker();
         let pulse_ended = self.pulse.files().next().is_some() && {
             let seconds = self.palette(self.system_dark.get()).pulse_seconds;
             self.pulse.poll(now, seconds, tx)
@@ -191,19 +192,44 @@ impl State {
                 return true;
             }
         }
-        let reloaded = match self
+        let event = self
             .refresh
             .as_mut()
-            .and_then(|refresh| refresh.poll(now, &self.review, tx))
-        {
-            Some(Ok(review)) => {
-                self.replace_review(review, tx);
+            .and_then(|refresh| refresh.poll(now, &self.review, tx));
+        let updated_summary = self
+            .refresh
+            .as_mut()
+            .and_then(Refresh::take_checkout_dirty)
+            .is_some_and(|dirty| self.set_checkout_dirty(dirty));
+        let reloaded = match event {
+            Some(Ok(RefreshEvent::Reloaded {
+                replacement,
+                worktree,
+            })) => {
+                self.set_worktree(worktree);
+                self.replace_review(replacement, tx);
+                true
+            }
+            Some(Ok(RefreshEvent::Updating)) => {
+                self.status = Status::Changing;
                 true
             }
             Some(Err(error)) => self.show_error(error.to_string()),
             None => false,
         };
-        pulse_ended || reloaded
+        pulse_ended || reloaded || updated_summary
+    }
+
+    fn set_worktree(&mut self, enabled: bool) {
+        if self.has_worktree != enabled {
+            self.has_worktree = enabled;
+            if enabled {
+                self.filter = self.previous_live_filter;
+            } else {
+                self.previous_live_filter = self.filter;
+                self.filter = Filter::Committed;
+            }
+        }
     }
 
     fn replace_review(&mut self, update: Replacement, tx: &mut Tx) {
@@ -214,11 +240,10 @@ impl State {
             same_comparison,
         } = update;
         let old = std::mem::replace(&mut self.review, review);
-        if let Some(session) = &mut self.session {
-            session.set_title(Some(&self.review.head_label), tx);
-        }
-        let loaded = matches!(self.status, Status::Ready { .. });
+        let changing = matches!(self.status, Status::Changing);
+        let loaded = matches!(self.status, Status::Ready { .. }) || changing;
         self.status = ready();
+        self.title(tx);
         self.review_version = self.review_version.wrapping_add(1);
         self.sidebar.rebuild(&self.review, self.filter);
         if !loaded {
@@ -256,7 +281,7 @@ impl State {
                 let index = rows.header(file)?;
                 rows.rows.get(index).map(|row| (index, row))
             }) {
-                if row.is_some() && top.is_some_and(|before| before.key == after.key) {
+                if !changing && row.is_some() && top.is_some_and(|before| before.key == after.key) {
                     tx.keep_on_screen(&after.key);
                 } else {
                     tx.scroll_key_to(&after.key, 0.0);
@@ -277,7 +302,9 @@ impl State {
 
     fn show_error(&mut self, message: String) -> bool {
         match &mut self.status {
-            Status::Loading => self.status = Status::Failed(message),
+            Status::Empty | Status::Loading | Status::Changing => {
+                self.status = Status::Failed(message);
+            }
             Status::Failed(error) => {
                 if *error == message {
                     return false;
@@ -456,10 +483,7 @@ impl State {
         if self.tuning.key(event, self.system_dark.get(), tx) {
             return true;
         }
-        if open_shortcut(event)
-            && let Some(session) = &self.session
-        {
-            session.show_start();
+        if self.workspace_key(event, tx) {
             return true;
         }
         if event.mods.cmd || event.mods.ctrl || event.mods.alt {

@@ -3,10 +3,12 @@
 mod chrome;
 mod diff;
 mod pulse;
+mod repositories;
+mod revisions;
 mod theme;
 
 use rune::{Cx, El, col, row, text};
-use rune_kit::Kit;
+use rune_kit::{Button, ButtonVariant, Kit};
 
 use crate::{
     palette::Palette,
@@ -16,8 +18,6 @@ use crate::{
 /// Height of the review toolbar and native controls.
 pub(crate) const TOOLBAR_HEIGHT: f32 = 68.0;
 
-pub(crate) use chrome::review_mark;
-
 /// Draws the application in the current system appearance.
 pub(crate) fn review(state: &State, cx: &mut Cx<State>) -> El {
     if state.headless_reduced_motion {
@@ -26,8 +26,10 @@ pub(crate) fn review(state: &State, cx: &mut Cx<State>) -> El {
     let kit = Kit::neutral(cx.env().system_dark);
     cx.caption_color(kit.c.text_base);
     let palette = state.palette(kit.dark);
+    let mut layer = Vec::new();
     let content = match &state.status {
-        Status::Loading => notice("Loading review…", None, &kit),
+        Status::Empty => empty(state, &kit),
+        Status::Loading | Status::Changing => notice("Loading review…", None, &kit),
         Status::Failed(error) => notice("Couldn’t load review", Some(error), &kit),
         Status::Ready { refresh_error } => {
             workspace(state, refresh_error.as_deref(), &kit, palette, cx)
@@ -35,13 +37,95 @@ pub(crate) fn review(state: &State, cx: &mut Cx<State>) -> El {
     };
     #[cfg(feature = "dev")]
     let content = state.tuning.panel(content, kit.dark);
-    col()
+    let toolbar = chrome::toolbar(state, &kit, cx.chrome_insets(), &mut layer);
+    let body = if let Some(workspace) = &state.workspace {
+        let content = col()
+            .grow(1.0)
+            .min_w(0.0)
+            .min_h(0.0)
+            .children(
+                workspace
+                    .add_error
+                    .as_ref()
+                    .map(|error| alert("open-error", error, &kit)),
+            )
+            .children(
+                workspace
+                    .active()
+                    .and_then(|entry| entry.revision_error.as_deref())
+                    .map(|error| alert("revision-error", error, &kit)),
+            )
+            .child(content);
+        row()
+            .key("repository-workspace")
+            .grow(1.0)
+            .min_h(0.0)
+            .child(repositories::sidebar(workspace, &kit, &mut layer))
+            .child(content)
+    } else {
+        content
+    };
+    let body = col()
         .key("review")
         .w_full()
         .h_full()
         .fill(kit.c.page)
-        .child(chrome::toolbar(state, &kit, cx.chrome_insets()))
-        .child(content)
+        .child(toolbar)
+        .child(body);
+    rune_kit::root(body, layer)
+}
+
+fn alert(key: &'static str, error: &str, kit: &Kit) -> El {
+    text(error)
+        .key(key)
+        .role("alert")
+        .font(kit.ty.ui)
+        .color(kit.c.danger.fg)
+        .px(18.0)
+        .py(9.0)
+        .w_full()
+        .fill(kit.c.danger.bg)
+        .wrap()
+}
+
+fn empty(state: &State, kit: &Kit) -> El {
+    let pending = state
+        .workspace
+        .as_ref()
+        .is_some_and(|workspace| workspace.pending);
+    col()
+        .key("empty-workspace")
+        .grow(1.0)
+        .min_h(0.0)
+        .w_full()
+        .center()
+        .gap(12.0)
+        .px(32.0)
+        .child(chrome::review_mark(kit, 48.0))
+        .child(
+            text("Review a repository")
+                .role("heading")
+                .font(kit.ty.body_medium)
+                .color(kit.c.text_base),
+        )
+        .child(
+            text("Add a working tree to compare branches and review local changes.")
+                .font(kit.ty.ui)
+                .color(kit.c.text_muted)
+                .wrap(),
+        )
+        .child(
+            Button::new(if pending {
+                "Opening…"
+            } else {
+                "Add repository…"
+            })
+            .variant(ButtonVariant::Contrast)
+            .disabled(pending)
+            .on_press_tx(State::pick_folder)
+            .build(kit)
+            .key("empty-add-repository"),
+        )
 }
 
 fn workspace(

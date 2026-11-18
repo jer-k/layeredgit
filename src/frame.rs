@@ -31,13 +31,7 @@ pub(crate) fn restore(handle: &WindowHandle, name: &str) {
     };
     let native_name = NSString::from_str(name);
     window.setFrameUsingName(&native_name);
-    // Rune's helper visits every AppKit window. Once there are several, give the
-    // name only to the window whose frame should be saved.
-    if app.windows().count() == 1 {
-        rune_mac::remember_frame(name);
-    } else {
-        window.setFrameAutosaveName(&native_name);
-    }
+    rune_mac::remember_frame(name);
 }
 
 #[cfg(not(target_os = "macos"))]

@@ -14,6 +14,7 @@ pub(crate) const USAGE: &str =
 pub(crate) struct Options {
     pub(crate) launch: Launch,
     pub(crate) demo_pulse: bool,
+    pub(crate) preload: Vec<PathBuf>,
     /// Rune's flags, in the order the user supplied them.
     pub(crate) tooling: Vec<String>,
 }
@@ -28,7 +29,7 @@ pub(crate) enum Launch {
 impl Options {
     pub(crate) fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Self, String> {
         let mut args = args.into_iter().peekable();
-        let mut path = None;
+        let mut paths = Vec::new();
         let mut base = None;
         let mut demo = false;
         let mut demo_pulse = false;
@@ -45,7 +46,7 @@ impl Options {
                         .filter(|value| !value.is_empty())
                         .ok_or_else(|| format!("{} needs a value", flag.to_string_lossy()))?;
                     if flag == "--repo" {
-                        path = Some(PathBuf::from(value));
+                        paths.push(PathBuf::from(value));
                     } else {
                         base = Some(value);
                     }
@@ -60,6 +61,7 @@ impl Options {
                 }
             }
         }
+        let path = paths.pop();
         let launch = if demo || demo_pulse && path.is_none() && base.is_none() {
             Launch::Demo
         } else if path.is_some() || base.is_some() {
@@ -73,6 +75,7 @@ impl Options {
         Ok(Self {
             launch,
             demo_pulse,
+            preload: paths,
             tooling,
         })
     }

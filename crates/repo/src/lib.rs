@@ -8,6 +8,7 @@
 mod batch;
 mod diff;
 mod git;
+mod refs;
 mod status;
 
 use std::ffi::{OsStr, OsString};
@@ -23,6 +24,7 @@ use batch::Batch;
 use git::{command, oid, path_from_bytes, single_line, success};
 
 pub use diff::{Change, ChangeKind, ChangedFile, FileKind, FileVersion, LineCounts};
+pub use refs::{Branch, Worktree};
 
 /// Default maximum size of an individual file version, in bytes.
 pub const DEFAULT_BYTE_LIMIT: u64 = 10 * 1024 * 1024;
@@ -42,6 +44,11 @@ pub enum Error {
     },
     /// No origin/HEAD, main, or master ref could be found.
     NoDefaultBase,
+    /// The supplied expression does not resolve to a commit.
+    InvalidRevision(
+        /// The original expression.
+        OsString,
+    ),
     /// A file path was empty, absolute, or contained traversal or NUL bytes.
     InvalidPath(
         /// Invalid path.
@@ -89,6 +96,13 @@ impl fmt::Display for Error {
                 write_stderr(formatter, stderr)
             }
             Self::NoDefaultBase => write!(formatter, "no origin/HEAD, main, or master base ref"),
+            Self::InvalidRevision(revision) => {
+                write!(
+                    formatter,
+                    "“{}” does not name a Git commit",
+                    revision.to_string_lossy()
+                )
+            }
             Self::InvalidPath(path) => {
                 write!(formatter, "invalid repository file path {}", path.display())
             }
@@ -130,6 +144,7 @@ pub struct Revisions {
     merge_base: Option<String>,
     head: Option<String>,
     base_tip: Option<String>,
+    worktree: Option<PathBuf>,
 }
 
 impl Revisions {
@@ -146,6 +161,11 @@ impl Revisions {
     /// Returns the resolved comparison ref's tip, even when it is past the merge base.
     pub fn base_tip(&self) -> Option<&str> {
         self.base_tip.as_deref()
+    }
+
+    /// Returns the root of the working layer, if this comparison has one.
+    pub fn worktree(&self) -> Option<&Path> {
+        self.worktree.as_deref()
     }
 }
 
@@ -352,6 +372,51 @@ impl Repo {
     /// Returns an error if the base is unavailable, no merge-base exists, or Git
     /// cannot resolve the commits.
     pub fn revisions(&self, base: Option<&OsStr>) -> Result<Revisions, Error> {
+        self.compare(base, None)
+    }
+
+    /// Captures the comparison against a chosen revision, or the checkout when
+    /// `head` is absent. An explicit local branch uses the worktree where that
+    /// branch is checked out; other explicit revisions have no worktree layer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid revision, unavailable default, missing
+    /// merge base, or Git failure.
+    pub fn compare(&self, base: Option<&OsStr>, head: Option<&OsStr>) -> Result<Revisions, Error> {
+        let worktree = if let Some(head) = head {
+            self.worktree_for(head)?
+        } else {
+            Some(self.root.clone())
+        };
+        let head = if let Some(head) = head {
+            self.resolve(head)?
+        } else {
+            let Some(head) = self.checked_out_commit()? else {
+                return Ok(Revisions {
+                    merge_base: None,
+                    head: None,
+                    base_tip: None,
+                    worktree,
+                });
+            };
+            head
+        };
+        let tip = match base {
+            Some(base) => self.resolve(base)?,
+            None => self.resolve(&self.default_base()?)?,
+        };
+        let output = git::run(command(&self.root).args(["merge-base", &tip, &head]))?;
+        let merge_base = oid(&success(output, "merge-base")?, "merge-base")?;
+        Ok(Revisions {
+            merge_base: Some(merge_base),
+            head: Some(head),
+            base_tip: Some(tip),
+            worktree,
+        })
+    }
+
+    fn checked_out_commit(&self) -> Result<Option<String>, Error> {
         let output = git::run(command(&self.root).args([
             "rev-parse",
             "--verify",
@@ -368,33 +433,11 @@ impl Repo {
                     .arg(head_ref),
             )?;
             if exists.status.code() == Some(1) && exists.stderr.is_empty() {
-                return Ok(Revisions {
-                    merge_base: None,
-                    head: None,
-                    base_tip: None,
-                });
+                return Ok(None);
             }
             success(exists, "show-ref HEAD target")?;
         }
-        let head = oid(&success(output, "resolve HEAD")?, "resolve HEAD")?;
-        let mut base_rev = match base {
-            Some(base) => base.to_owned(),
-            None => self.default_base()?,
-        };
-        base_rev.push("^{commit}");
-        let output = git::run(
-            command(&self.root)
-                .args(["rev-parse", "--verify", "--end-of-options"])
-                .arg(base_rev),
-        )?;
-        let tip = oid(&success(output, "resolve base")?, "resolve base")?;
-        let output = git::run(command(&self.root).args(["merge-base", &tip, &head]))?;
-        let merge_base = oid(&success(output, "merge-base")?, "merge-base")?;
-        Ok(Revisions {
-            merge_base: Some(merge_base),
-            head: Some(head),
-            base_tip: Some(tip),
-        })
+        oid(&success(output, "resolve HEAD")?, "resolve HEAD").map(Some)
     }
 
     fn symbolic_ref(&self, name: &str) -> Result<Option<OsString>, Error> {
@@ -455,7 +498,11 @@ impl Repo {
                 expression.push(&version.path);
                 self.read_blob(expression.as_bytes())
             }
-            None if layer == Layer::Worktree => self.read_worktree(&version.path),
+            None if layer == Layer::Worktree => {
+                revisions.worktree().map_or(Ok(Contents::Missing), |root| {
+                    self.read_worktree_at(root, &version.path)
+                })
+            }
             None => Ok(Contents::Missing),
         }
     }
@@ -535,7 +582,11 @@ impl Repo {
     ///
     /// Returns an error if the path is invalid or a filesystem read fails.
     pub fn read_worktree(&self, path: &Path) -> Result<Contents, Error> {
-        let Some((full_path, metadata)) = self.worktree_metadata(path)? else {
+        self.read_worktree_at(&self.root, path)
+    }
+
+    fn read_worktree_at(&self, root: &Path, path: &Path) -> Result<Contents, Error> {
+        let Some((full_path, metadata)) = Self::worktree_metadata(root, path)? else {
             return Ok(Contents::Missing);
         };
         let limit = self.byte_limit;
@@ -577,9 +628,12 @@ impl Repo {
         Ok(Contents::Bytes(bytes))
     }
 
-    fn worktree_metadata(&self, path: &Path) -> Result<Option<(PathBuf, fs::Metadata)>, Error> {
+    fn worktree_metadata(
+        root: &Path,
+        path: &Path,
+    ) -> Result<Option<(PathBuf, fs::Metadata)>, Error> {
         validate_path(path)?;
-        let mut full_path = self.root.clone();
+        let mut full_path = root.to_owned();
         let mut components = path.components().peekable();
         while let Some(component) = components.next() {
             full_path.push(component);

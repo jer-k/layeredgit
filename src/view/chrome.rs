@@ -3,9 +3,11 @@ use rune::{ChromeInsets, Color, Cursor, El, MotionIntent, TextStyle, col, el, ro
 use rune_kit::{FileNode, Kit, Tree, TreeItem, TreeStyle};
 
 use crate::{
+    APP_NAME,
     input::ChangeKind,
     model::Filter,
     palette::Palette,
+    repositories::Side,
     state::{State, Status},
 };
 
@@ -27,21 +29,36 @@ pub(crate) fn review_mark(kit: &Kit, size: f32) -> El {
         )
 }
 
-pub(super) fn toolbar(state: &State, kit: &Kit, insets: ChromeInsets) -> El {
+pub(super) fn toolbar(state: &State, kit: &Kit, insets: ChromeInsets, layer: &mut Vec<El>) -> El {
     let c = &kit.c;
+    let name = state
+        .workspace
+        .as_ref()
+        .map_or("Review changes", |workspace| {
+            workspace
+                .active()
+                .map_or(APP_NAME, |entry| entry.name.as_str())
+        });
     let title = row()
         .items_center()
+        .shrink()
+        .min_w(0.0)
         .gap(10.0)
         .child(review_mark(kit, 32.0))
         .child(
-            text("Review changes")
+            text(name)
+                .key("workspace-title")
                 .font(TextStyle {
                     size: 17.0,
                     weight: 650.0,
                     ..kit.ty.body
                 })
                 .color(c.text_base)
-                .single_line(),
+                .max_w(210.0)
+                .min_w(0.0)
+                .shrink()
+                .truncate_middle()
+                .help_when_truncated(name),
         );
     let toolbar = row()
         .key("toolbar")
@@ -54,51 +71,48 @@ pub(super) fn toolbar(state: &State, kit: &Kit, insets: ChromeInsets) -> El {
         .window_drag()
         .border_sides([0.0, 0.0, 1.0, 0.0], c.border_muted)
         .child(title);
-    if matches!(&state.status, Status::Ready { .. }) {
+    if matches!(state.status, Status::Empty) {
+        toolbar
+    } else {
         let branches = row()
             .key("comparison")
             .items_center()
             .gap(9.0)
             .shrink()
             .min_w(0.0)
-            .child(branch("Base", &state.review.base_label, false, kit))
+            .child(super::revisions::render(state, Side::Base, kit, layer))
             .child(text("→").font(kit.ty.ui).color(c.text_muted))
-            .child(branch("HEAD", &state.review.head_label, true, kit));
+            .child(super::revisions::render(state, Side::Head, kit, layer));
+        let checking = state
+            .workspace
+            .as_ref()
+            .and_then(crate::repositories::Workspace::active)
+            .is_some_and(|entry| entry.validating.is_some());
+        let ready = matches!(state.status, Status::Ready { .. });
         toolbar
             .child(el().size(1.0, 24.0).fill(c.border_muted))
             .child(branches)
-            .child(el().grow(1.0).h_full().window_drag())
-            .child(filters(state.filter, kit))
-    } else {
-        toolbar
-    }
-}
-
-fn branch(label: &'static str, name: &str, head: bool, kit: &Kit) -> El {
-    let c = &kit.c;
-    row()
-        .items_center()
-        .gap(7.0)
-        .shrink()
-        .min_w(0.0)
-        .child(text(label).font(kit.ty.text_xsmall).color(c.text_muted))
-        .child(
-            text(name)
-                .font(kit.ty.mono)
-                .color(if head { c.info.fg } else { c.text_base })
+            .children((ready && !state.has_worktree).then(|| {
+                text(format!(
+                    "{} — not checked out, committed changes only",
+                    state.active_label(Side::Head)
+                ))
+                .key("committed-only-note")
+                .font(kit.ty.text_xsmall)
+                .color(c.text_muted)
                 .shrink()
                 .min_w(0.0)
                 .truncate_middle()
-                .help_when_truncated(name)
-                .px(8.0)
-                .py(3.0)
-                .radius(kit.radius.md)
-                .fill(if head {
-                    accent_surface(kit)
-                } else {
-                    c.layer_01
-                }),
-        )
+            }))
+            .children(checking.then(|| {
+                text("Checking revision…")
+                    .key("checking-revision")
+                    .font(kit.ty.text_xsmall)
+                    .color(c.text_muted)
+            }))
+            .child(el().grow(1.0).h_full().window_drag())
+            .children((ready && state.has_worktree).then(|| filters(state.filter, kit)))
+    }
 }
 
 fn filters(current: Filter, kit: &Kit) -> El {
