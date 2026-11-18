@@ -43,13 +43,19 @@ fn main() {
         ..AppSpec::new(
             "Git Viewer",
             (1240.0, 820.0),
-            || State::open(None, false),
+            || State::open(None, false, false),
             view::review,
         )
     })
     .titlebar(Titlebar::new(view::TOOLBAR_HEIGHT))
     .args(options.tooling)
-    .init(|| State::open(options.repository, tooling::headless_run().is_some()))
+    .init(move || {
+        State::open(
+            options.repository,
+            tooling::headless_run().is_some(),
+            options.demo_pulse,
+        )
+    })
     .on_visibility(State::visibility);
     let handle = app.handle();
     app.on_ready(move |_| {

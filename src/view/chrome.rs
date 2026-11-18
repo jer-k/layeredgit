@@ -252,6 +252,12 @@ pub(super) fn sidebar(state: &State, kit: &Kit) -> El {
     style.padding = 9.0;
     style.selected = accent_surface(kit);
     let row_kit = kit.clone();
+    let fresh: HashSet<_> = state
+        .pulse
+        .files()
+        .filter(|_| state.filter != Filter::Committed)
+        .collect();
+    let opacity = state.pulse.opacity().clone();
     let list = Tree::new(State::sidebar, State::sidebar_mut, FileNode::label)
         .name("Changed files")
         .style(style)
@@ -275,6 +281,11 @@ pub(super) fn sidebar(state: &State, kit: &Kit) -> El {
                     .center()
                     .radius(row_kit.radius.sm)
                     .fill(surface)
+                    .children(
+                        fresh
+                            .contains(&badge.file)
+                            .then(|| super::pulse::wash(&row_kit, &opacity, row_kit.radius.sm)),
+                    )
                     .child(text(glyph).font(row_kit.ty.mono).color(ink)),
             )
         })
@@ -351,3 +362,4 @@ fn shortcuts(kit: &Kit, can_refresh: bool) -> El {
         list
     }
 }
+use std::collections::HashSet;

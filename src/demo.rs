@@ -1,6 +1,7 @@
 //! Demo review with both layers populated and a large file for scroll checks.
 
 use std::fmt::Write as _;
+use std::path::Path;
 
 use crate::input::{ChangeKind, FileVersion, InputFile, Placeholder, ReviewInput};
 
@@ -9,6 +10,7 @@ use ChangeKind::{Added, Deleted, Modified, Renamed, Unchanged};
 /// Builds the demo input used when opening the review window.
 pub(crate) fn review() -> ReviewInput {
     ReviewInput {
+        base_revision: [None, None],
         base_label: "main".into(),
         head_label: "feature/stacked-diffs".into(),
         files: vec![
@@ -81,6 +83,28 @@ pub(crate) fn review() -> ReviewInput {
             generated_routes(),
         ],
     }
+}
+
+/// Simulates an external edit without touching the headless fixture on disk.
+pub(crate) fn edited(mut input: ReviewInput) -> ReviewInput {
+    for file in &mut input.files {
+        let Some(version) = file.worktree.as_mut() else {
+            continue;
+        };
+        let Some(content) = version.text.as_mut() else {
+            continue;
+        };
+        if version.path == Path::new("src/lib.rs") {
+            *content = content.replace(
+                "    pub fn can_retry",
+                "    /// Limits are supplied by the caller.\n    /// A limit of zero disables retrying.\n    pub fn can_retry",
+            );
+        }
+        if version.path == Path::new("src/generated.rs") {
+            *content = content.replace("4242; // uncommitted", "4243; // updated limit");
+        }
+    }
+    input
 }
 
 fn file(path: &str, texts: [Option<&str>; 3], layers: [ChangeKind; 2]) -> InputFile {

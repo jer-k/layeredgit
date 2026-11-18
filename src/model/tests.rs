@@ -340,6 +340,7 @@ fn rows(review: &Review, filter: Filter) -> ReviewRows {
 
 fn review_of(file: InputFile) -> Review {
     Review::new(ReviewInput {
+        base_revision: [None, None],
         base_label: "base".into(),
         head_label: "head".into(),
         files: vec![file],

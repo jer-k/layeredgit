@@ -616,6 +616,25 @@ test_case!(polling_token_reports_status_index_and_head_changes, {
     assert_ne!(staged, repo.change_token().unwrap());
 });
 
+test_case!(polling_token_reports_reedits_with_unchanged_porcelain, {
+    let fixture = Fixture::new();
+    fixture.write("tracked file\n.txt", b"clean\n");
+    fixture.commit("initial");
+    let repo = Repo::open(&fixture.root).unwrap();
+    let status = || fixture.git_input(&["status", "--porcelain=v2", "-z"], b"");
+    for (name, initial, replacement) in [
+        ("tracked file\n.txt", b"dirty\n", b"again\n"),
+        ("untracked file", b"first\n", b"other\n"),
+    ] {
+        fixture.write(name, initial);
+        let before = status();
+        let token = repo.change_token().unwrap();
+        fixture.write(name, replacement);
+        assert_eq!(status(), before);
+        assert_ne!(repo.change_token().unwrap(), token);
+    }
+});
+
 test_case!(recreated_paths_preserve_their_layer_presence, {
     let fixture = Fixture::new();
     fixture.write("committed-deletion", b"old\n");

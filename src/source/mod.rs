@@ -5,11 +5,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use repo::{BinaryReason, ChangedFile, Contents, Error, Layer, Repo, decode_text};
+use repo::{BinaryReason, ChangedFile, Contents, Error, Layer, Repo, Revisions, decode_text};
 
 use crate::input::{ChangeKind, FileVersion, InputFile, Placeholder, ReviewInput};
 
 mod refresh;
+mod watch;
 pub(crate) use refresh::Refresh;
 
 #[derive(Clone)]
@@ -18,14 +19,31 @@ pub(crate) struct Repository {
     pub(crate) base: Option<OsString>,
 }
 
+#[derive(PartialEq, Eq)]
+struct Comparison {
+    base: OsString,
+    revisions: Revisions,
+}
+
 impl Repository {
     /// Builds the input using the merge base, HEAD, and the live working tree.
     pub(crate) fn load_input(&self) -> Result<ReviewInput, Error> {
-        let mut repo = Repo::open(&self.path)?;
+        let repo = Repo::open(&self.path)?;
+        let comparison = self.comparison(&repo)?;
+        self.read_input(repo, &comparison)
+    }
+
+    fn comparison(&self, repo: &Repo) -> Result<Comparison, Error> {
         let base = match &self.base {
             Some(base) => base.clone(),
             None => repo.default_base()?,
         };
+        let revisions = repo.revisions(Some(&base))?;
+        Ok(Comparison { base, revisions })
+    }
+
+    fn read_input(&self, mut repo: Repo, comparison: &Comparison) -> Result<ReviewInput, Error> {
+        let Comparison { base, revisions } = comparison;
         let base_label = base.to_string_lossy();
         let base_label = if self.base.is_some() {
             &base_label
@@ -35,15 +53,16 @@ impl Repository {
                 .or_else(|| base_label.strip_prefix("refs/remotes/"))
                 .unwrap_or(&base_label)
         };
-        let revisions = repo.revisions(Some(&base))?;
         let head_label = repo.head_name()?.to_string_lossy().into_owned();
         let files = repo
-            .changed_files(&revisions)?
+            .changed_files(revisions)?
             .into_iter()
-            .map(|file| convert_file(&file, |layer| repo.read(&revisions, &file, layer)))
+            .map(|file| convert_file(&file, |layer| repo.read(revisions, &file, layer)))
             .collect::<Result<_, _>>()?;
         Ok(ReviewInput {
             base_label: base_label.into(),
+            base_revision: [revisions.base_tip(), revisions.merge_base()]
+                .map(|id| id.map(str::to_owned)),
             head_label,
             files,
         })
@@ -117,4 +136,4 @@ fn change_kind(change: repo::Change) -> ChangeKind {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

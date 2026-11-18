@@ -1,5 +1,6 @@
 //! Alignment, syntax mapping, and the review data that the view reads.
 
+pub(crate) mod fresh;
 mod highlighting;
 mod projection;
 mod rows;
@@ -30,6 +31,7 @@ const CONTEXT_LINES: usize = 3;
 #[derive(Default)]
 pub(crate) struct Review {
     pub(crate) base_label: String,
+    base_revision: [Option<String>; 2],
     pub(crate) head_label: String,
     pub(crate) files: Vec<FileDiff>,
     order: [Vec<usize>; 3],
@@ -52,6 +54,7 @@ impl Review {
         });
         Self {
             base_label: input.base_label,
+            base_revision: input.base_revision,
             head_label: input.head_label,
             files,
             order,
@@ -96,6 +99,7 @@ pub(crate) struct Counts {
 
 pub(crate) struct FileDiff {
     paths: [Option<PathBuf>; 3],
+    worktree_text: Option<String>,
     pub(crate) committed: ChangeKind,
     pub(crate) uncommitted: ChangeKind,
     pub(crate) committed_counts: Counts,
@@ -135,7 +139,7 @@ struct Newline {
 
 impl FileDiff {
     fn new(input: InputFile) -> Self {
-        let versions = [input.base, input.head, input.worktree];
+        let mut versions = [input.base, input.head, input.worktree];
         let text = match input.placeholders {
             [Some(before), Some(after)] => Err(before.max(after)),
             _ => TextDiff::new(&versions).map_err(|_| Placeholder::TooManyLines),
@@ -145,6 +149,9 @@ impl FileDiff {
             |diff| counts(&diff.lines),
         );
         Self {
+            worktree_text: versions[WORKTREE]
+                .as_mut()
+                .and_then(|version| version.text.take()),
             paths: versions.map(|version| version.map(|v| v.path)),
             committed: input.committed,
             uncommitted: input.uncommitted,

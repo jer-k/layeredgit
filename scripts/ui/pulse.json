@@ -1,0 +1,7 @@
+{
+  "events": [
+    {"t": 0.18, "type": "tap", "key": "file/src/lib.rs"},
+    {"t": 0.50, "type": "mark", "name": "reload"},
+    {"t": 1.95, "type": "mark", "name": "end"}
+  ]
+}

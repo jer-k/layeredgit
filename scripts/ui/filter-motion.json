@@ -1,0 +1,9 @@
+{
+  "events": [
+    {"t": 0.18, "type": "tap", "key": "file/src/lib.rs"},
+    {"t": 0.70, "type": "tap", "key": "filter/committed"},
+    {"t": 1.40, "type": "tap", "key": "filter/uncommitted"},
+    {"t": 2.10, "type": "tap", "key": "filter/all"},
+    {"t": 2.80, "type": "mark", "name": "end"}
+  ]
+}

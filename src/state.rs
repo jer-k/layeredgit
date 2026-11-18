@@ -1,6 +1,7 @@
 //! Review interactions and the current virtual list projection.
 
 mod files;
+mod pulse;
 mod restore;
 
 pub(crate) use files::FileTree;
@@ -8,12 +9,12 @@ use files::Sidebar;
 #[cfg(test)]
 mod tests;
 
-use std::{collections::HashSet, ops::Range};
+use std::{collections::HashSet, ops::Range, sync::Arc};
 
 use rune::{Key, KeyEvent, Tx, Waker};
 
 use crate::{
-    model::{Filter, Review, ReviewRows, RowKind},
+    model::{Filter, Review, ReviewRows, RowKind, fresh::Replacement},
     source::{Refresh, Repository},
 };
 
@@ -27,10 +28,11 @@ pub(crate) enum Status {
 }
 
 pub(crate) struct State {
-    pub(crate) review: Review,
+    pub(crate) review: Arc<Review>,
     pub(crate) status: Status,
-    previous_review: Option<Review>,
     refresh: Option<Refresh>,
+    demo_reload: Option<Replacement>,
+    pub(crate) pulse: pulse::Pulse,
     pub(crate) filter: Filter,
     pub(crate) rows: ReviewRows,
     pub(crate) rows_version: u64,
@@ -47,18 +49,27 @@ pub(crate) struct State {
 }
 
 impl State {
-    pub(crate) fn open(repository: Option<Repository>, headless: bool) -> Self {
-        match repository {
-            None => Self::new(Review::new(crate::demo::review()), ready(), None),
-            Some(repository) if headless => match repository.load_input() {
-                Ok(input) => Self::new(Review::new(input), ready(), None),
-                Err(error) => Self::new(Review::default(), Status::Failed(error.to_string()), None),
-            },
-            Some(repository) => Self::new(
-                Review::default(),
-                Status::Loading,
-                Some(Refresh::new(repository)),
-            ),
+    pub(crate) fn open(repository: Option<Repository>, headless: bool, demo_pulse: bool) -> Self {
+        let input = match repository {
+            None => Ok(crate::demo::review()),
+            Some(repository) if headless => repository.load_input(),
+            Some(repository) => {
+                return Self::new(
+                    Review::default(),
+                    Status::Loading,
+                    Some(Refresh::new(repository)),
+                );
+            }
+        };
+        match input {
+            Ok(input) => {
+                let updated = (headless && demo_pulse).then(|| crate::demo::edited(input.clone()));
+                let mut state = Self::new(Review::new(input), ready(), None);
+                state.demo_reload =
+                    updated.map(|input| Replacement::new(Review::new(input), &state.review));
+                state
+            }
+            Err(error) => Self::new(Review::default(), Status::Failed(error.to_string()), None),
         }
     }
 
@@ -73,10 +84,11 @@ impl State {
             sidebar.select(file);
         }
         Self {
-            review,
+            review: Arc::new(review),
             status,
-            previous_review: None,
             refresh,
+            demo_reload: None,
+            pulse: pulse::Pulse::default(),
             filter,
             rows,
             rows_version: 0,
@@ -98,7 +110,7 @@ impl State {
     }
 
     pub(crate) fn setup(&mut self, waker: Waker) {
-        if let Some(refresh) = &self.refresh {
+        if let Some(refresh) = &mut self.refresh {
             refresh.setup(waker);
         }
     }
@@ -122,10 +134,19 @@ impl State {
 
     pub(crate) fn poll(&mut self, now: f64, tx: &mut Tx) -> bool {
         self.reveal_sidebar(tx);
-        match self
+        let pulse_ended = self.pulse.poll(now, tx);
+        if self.demo_reload.is_some() {
+            if now < 0.5 {
+                tx.wake_at(0.5);
+            } else if let Some(update) = self.demo_reload.take() {
+                self.replace_review(update, tx);
+                return true;
+            }
+        }
+        let reloaded = match self
             .refresh
             .as_mut()
-            .and_then(|refresh| refresh.poll(now, tx))
+            .and_then(|refresh| refresh.poll(now, &self.review, tx))
         {
             Some(Ok(review)) => {
                 self.replace_review(review, tx);
@@ -133,10 +154,17 @@ impl State {
             }
             Some(Err(error)) => self.show_error(error.to_string()),
             None => false,
-        }
+        };
+        pulse_ended || reloaded
     }
 
-    fn replace_review(&mut self, review: Review, tx: &mut Tx) {
+    fn replace_review(&mut self, update: Replacement, tx: &mut Tx) {
+        let Replacement {
+            review,
+            files,
+            fresh,
+            same_comparison,
+        } = update;
         let old = std::mem::replace(&mut self.review, review);
         let loaded = matches!(self.status, Status::Ready { .. });
         self.status = ready();
@@ -147,13 +175,12 @@ impl State {
             self.select_file(self.rows.files.first().copied());
             return;
         }
-        // Retain both alignments for matching lines across refreshes.
-        let old = self.previous_review.insert(old);
-        let files = restore::match_files(old, &self.review);
+        self.pulse
+            .reload(fresh, same_comparison, &old, &self.review, &files, tx);
         let mapped = |index: usize| files.get(index).copied().flatten();
         let top = self.rows.rows.get(self.visible_rows.start);
         self.collapsed = self.collapsed.iter().copied().filter_map(mapped).collect();
-        self.expanded = restore::folds(old, &self.review, &files, &self.expanded);
+        self.expanded = restore::folds(&old, &self.review, &files, &self.expanded);
         let rows = ReviewRows::new(&self.review, self.filter, &self.collapsed, &self.expanded);
         let target = self
             .active_file
@@ -214,18 +241,37 @@ impl State {
             tx.live_only();
             return;
         }
-        self.filter = filter;
-        self.sidebar.rebuild(&self.review, filter);
-        self.rebuild_rows(tx);
-        self.sticky_file = None;
+        let rows = ReviewRows::new(&self.review, filter, &self.collapsed, &self.expanded);
         let target = self
             .active_file
-            .filter(|&file| self.rows.header(file).is_some())
-            .or_else(|| self.rows.files.first().copied());
+            .filter(|&file| rows.header(file).is_some())
+            .or_else(|| rows.files.first().copied());
+        let anchor = self
+            .rows
+            .rows
+            .get(self.visible_rows.start)
+            .filter(|row| target == Some(row.file))
+            .and_then(|row| {
+                let range = rows.file_rows_range(row.file)?;
+                rows.rows
+                    .get(range)?
+                    .iter()
+                    .find(|candidate| candidate.key == row.key)
+            })
+            .map(|row| row.key.clone());
+        self.filter = filter;
+        self.sidebar.rebuild(&self.review, filter);
+        self.set_rows(rows, tx);
+        tx.animated();
+        tx.motion(rune::tok::motion::REFLOW);
         self.select_file(target);
-        if let Some(file) = target {
+        if let Some(anchor) = anchor {
+            tx.keep_on_screen(anchor);
+        } else if let Some(file) = target {
+            self.sticky_file = None;
             self.jump_to_file(file, tx);
         } else {
+            self.sticky_file = None;
             self.visible_rows = 0..0;
         }
     }
@@ -256,6 +302,7 @@ impl State {
 
     /// Scrolling within a file only changes the navigation anchor.
     pub(crate) fn show_rows(&mut self, rows: Range<usize>) -> bool {
+        let hint_changed = self.pulse.offscreen(&self.visible_rows) != self.pulse.offscreen(&rows);
         self.visible_rows = rows;
         let top = self.rows.rows.get(self.visible_rows.start);
         let active = self
@@ -275,7 +322,7 @@ impl State {
         }
         let sticky_changed = self.sticky_file != sticky;
         self.sticky_file = sticky;
-        file_changed || sticky_changed
+        file_changed || sticky_changed || hint_changed
     }
 
     /// A jump to a short file near the end can stop with an earlier file at the top.
@@ -409,9 +456,14 @@ impl State {
 
     fn set_rows(&mut self, rows: ReviewRows, tx: &mut Tx) {
         self.rows = rows;
+        self.pulse.project(&self.rows, &self.review, self.filter);
         self.rows_version = self.rows_version.wrapping_add(1);
         self.navigation = None;
         tx.instant();
+    }
+
+    pub(crate) fn pulse_offscreen(&self) -> (usize, usize) {
+        self.pulse.offscreen(&self.visible_rows)
     }
 }
 

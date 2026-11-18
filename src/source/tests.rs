@@ -3,20 +3,12 @@
     reason = "Fixture setup and expectations may fail the test"
 )]
 
-use std::{
-    collections::HashSet,
-    convert::Infallible,
-    fs,
-    process::Command,
-    sync::{Arc, mpsc},
-    time::Duration,
-};
+use std::{collections::HashSet, convert::Infallible, process::Command};
 
 use diff_stack::ThreeWayChange::{
     CommittedAdd, CommittedDelete, CommittedThenRemoved, Context, UncommittedAdd, UncommittedDelete,
 };
 use repo::{Change, FileKind};
-use rune::Tx;
 
 use crate::model::{FileBody, Filter, Review, ReviewRows, RowKind};
 
@@ -202,55 +194,7 @@ fn fixture_repository_builds_a_three_way_review() {
     }
 }
 
-#[test]
-fn refresh_checks_the_token_and_can_force_a_reload() {
-    let (_directory, target) = fixture();
-    let mut refresh = Refresh::new(target.clone());
-    let (send, received) = mpsc::channel();
-    refresh.setup(Arc::new(move || {
-        let _ = send.send(());
-    }));
-    let wait = || received.recv_timeout(Duration::from_secs(5)).unwrap();
-    let mut tx = Tx::default();
-
-    refresh.force(&mut tx);
-    assert!(refresh.poll(0.0, &mut tx).is_none());
-    wait();
-    let first = refresh.poll(0.0, &mut tx).unwrap().unwrap();
-    assert_eq!(first.files.len(), 13);
-
-    fs::write(target.path.join("TODO.md"), "updated scratch notes\n").unwrap();
-    assert!(refresh.poll(1.0, &mut tx).is_none());
-    wait();
-    assert!(refresh.poll(1.0, &mut tx).is_none());
-
-    refresh.force(&mut tx);
-    assert!(refresh.poll(1.1, &mut tx).is_none());
-    wait();
-    let forced = refresh.poll(1.1, &mut tx).unwrap().unwrap();
-    let todo = forced
-        .files
-        .iter()
-        .find(|file| file.path() == "TODO.md")
-        .unwrap();
-    let FileBody::Text(diff) = todo.body(Filter::All) else {
-        panic!("the refreshed untracked file should have a text diff");
-    };
-    assert_eq!(diff.lines[0].text, "updated scratch notes");
-
-    fs::write(target.path.join("new-untracked.txt"), "added\n").unwrap();
-    assert!(refresh.poll(2.2, &mut tx).is_none());
-    wait();
-    let automatic = refresh.poll(2.2, &mut tx).unwrap().unwrap();
-    assert!(
-        automatic
-            .files
-            .iter()
-            .any(|file| file.path() == "new-untracked.txt")
-    );
-}
-
-fn fixture() -> (tempfile::TempDir, Repository) {
+pub(crate) fn fixture() -> (tempfile::TempDir, Repository) {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("fixture repo");
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/make-fixture-repo.sh");

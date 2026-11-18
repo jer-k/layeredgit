@@ -2,6 +2,7 @@
 
 mod chrome;
 mod diff;
+mod pulse;
 mod theme;
 
 use rune::{Cx, El, col, row, text};

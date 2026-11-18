@@ -3,9 +3,12 @@
 use std::{borrow::Cow, path::PathBuf};
 
 /// A branch comparison with working-tree changes layered on top.
+#[derive(Clone)]
 pub(crate) struct ReviewInput {
     /// Label for the merge-base side of the comparison.
     pub base_label: String,
+    /// Resolved base ref tip and merge base, to identify comparison changes.
+    pub base_revision: [Option<String>; 2],
     /// Label for the checked-out branch or commit.
     pub head_label: String,
     /// Files in review order.
@@ -13,6 +16,7 @@ pub(crate) struct ReviewInput {
 }
 
 /// One logical file across the merge base, HEAD, and working tree.
+#[derive(Clone)]
 pub(crate) struct InputFile {
     /// Version at the merge base, if the file exists there.
     pub base: Option<FileVersion>,
@@ -29,6 +33,7 @@ pub(crate) struct InputFile {
 }
 
 /// The path and content of an existing version of a file.
+#[derive(Clone)]
 pub(crate) struct FileVersion {
     /// Repository-relative path at this version.
     pub path: PathBuf,

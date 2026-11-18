@@ -5,26 +5,32 @@ use std::sync::Arc;
 use repo::{ChangeToken, Error, Repo};
 use rune::{Latest, Tx, Waker};
 
-use super::Repository;
-use crate::model::Review;
+use super::{Comparison, Repository, watch::Watch};
+use crate::model::{Review, fresh::Replacement};
 
-const INTERVAL: f64 = 1.0;
+const INTERVAL: f64 = 5.0;
 
 pub(crate) struct Refresh {
     target: Repository,
     pending: Latest<Result<Check, Error>>,
-    probe: Option<Probe>,
+    probe: Option<Arc<Probe>>,
+    waker: Option<Waker>,
     visible: bool,
     started: bool,
     forced: bool,
     due: f64,
 }
 
-type Probe = (Arc<Repo>, ChangeToken);
+struct Probe {
+    repo: Arc<Repo>,
+    watch: Option<Arc<Watch>>,
+    token: ChangeToken,
+    comparison: Comparison,
+}
 
 struct Check {
     probe: Probe,
-    review: Option<Review>,
+    review: Option<Replacement>,
 }
 
 impl Refresh {
@@ -33,6 +39,7 @@ impl Refresh {
             target,
             pending: Latest::default(),
             probe: None,
+            waker: None,
             visible: true,
             started: false,
             forced: false,
@@ -40,8 +47,9 @@ impl Refresh {
         }
     }
 
-    pub(crate) fn setup(&self, waker: Waker) {
-        self.pending.set_waker(waker);
+    pub(crate) fn setup(&mut self, waker: Waker) {
+        self.pending.set_waker(Arc::clone(&waker));
+        self.waker = Some(waker);
     }
 
     pub(crate) fn force(&mut self, tx: &mut Tx) {
@@ -58,7 +66,12 @@ impl Refresh {
         }
     }
 
-    pub(crate) fn poll(&mut self, now: f64, tx: &mut Tx) -> Option<Result<Review, Error>> {
+    pub(crate) fn poll(
+        &mut self,
+        now: f64,
+        current: &Arc<Review>,
+        tx: &mut Tx,
+    ) -> Option<Result<Replacement, Error>> {
         // Check before taking the result so a worker finishing here can't have its
         // answer overwritten by the next request.
         let pending = self.pending.is_pending();
@@ -66,7 +79,7 @@ impl Refresh {
         let idle = !pending || result.is_some();
         let landed = result.and_then(|result| match result {
             Ok(Check { probe, review }) => {
-                self.probe = Some(probe);
+                self.probe = Some(Arc::new(probe));
                 review.map(Ok)
             }
             Err(error) => {
@@ -76,16 +89,30 @@ impl Refresh {
             }
         });
         if self.started && idle {
-            if self.forced || (self.visible && now >= self.due) {
+            let changed = self.visible
+                && self
+                    .probe
+                    .as_ref()
+                    .and_then(|probe| probe.watch.as_deref())
+                    .is_some_and(Watch::take_changed);
+            if self.forced || changed || (self.visible && now >= self.due) {
                 self.due = now + INTERVAL;
+                let force = std::mem::take(&mut self.forced) || changed;
+                let current = landed
+                    .as_ref()
+                    .and_then(|result| result.as_ref().ok())
+                    .map_or(current, |update| &update.review);
                 let input = (
                     self.target.clone(),
                     self.probe.clone(),
-                    std::mem::take(&mut self.forced),
+                    self.waker.clone(),
+                    force,
+                    Arc::clone(current),
                 );
-                self.pending.request(input, |(target, probe, force)| {
-                    Self::check(&target, probe, force)
-                });
+                self.pending
+                    .request(input, |(target, probe, waker, force, current)| {
+                        Self::check(&target, probe.as_deref(), waker, force, &current)
+                    });
             } else if self.visible {
                 tx.wake_at(self.due);
             }
@@ -93,21 +120,40 @@ impl Refresh {
         landed
     }
 
-    fn check(target: &Repository, previous: Option<Probe>, force: bool) -> Result<Check, Error> {
-        // The probe only reads status. A repo with an active blob subprocess lives entirely
-        // inside load_input, so even dropping a probe on the UI thread cannot wait for Git.
-        let repo = match &previous {
-            Some((repo, _)) if !force => Arc::clone(repo),
+    fn check(
+        target: &Repository,
+        previous: Option<&Probe>,
+        waker: Option<Waker>,
+        force: bool,
+        current: &Review,
+    ) -> Result<Check, Error> {
+        // Only the repo passed to read_input opens a blob process.
+        let repo = match previous {
+            Some(previous) => Arc::clone(&previous.repo),
             _ => Arc::new(Repo::open(&target.path)?),
         };
+        let watch = previous.and_then(|probe| probe.watch.clone()).or_else(|| {
+            waker
+                .and_then(|waker| Watch::start(Arc::clone(&repo), waker))
+                .map(Arc::new)
+        });
         let token = repo.change_token()?;
-        let review = if !force && previous.is_some_and(|(_, previous)| previous == token) {
+        let comparison = target.comparison(&repo)?;
+        let review = if !force
+            && previous.is_some_and(|old| old.token == token && old.comparison == comparison)
+        {
             None
         } else {
-            Some(Review::new(target.load_input()?))
+            let review = Review::new(target.read_input(Repo::open(repo.root())?, &comparison)?);
+            Some(Replacement::new(review, current))
         };
         Ok(Check {
-            probe: (repo, token),
+            probe: Probe {
+                repo,
+                watch,
+                token,
+                comparison,
+            },
             review,
         })
     }

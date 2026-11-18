@@ -3,8 +3,8 @@ use std::{borrow::Cow, ops::Range, rc::Rc};
 use diff_stack::ThreeWayChange;
 
 use rune::{
-    Align, Color, Cursor, El, GrowthSpec, ScrollSpec, Shadow, TextStyle, col, el, icon, memo, rich,
-    row, text,
+    Align, Color, Cursor, El, GrowthSpec, Live, ScrollSpec, Shadow, TextStyle, Transition, col, el,
+    icon, memo, rich, row, text,
 };
 use rune_kit::{Kit, syntax::SyntaxTheme};
 
@@ -50,7 +50,11 @@ pub(super) fn pane(state: &State, kit: &Kit, viewport_width: f32) -> El {
                     .get(index)
                     .map_or(Cow::Borrowed(""), |row| Cow::Borrowed(row.key.as_str()))
             },
-            move |state: &State, index| render.render_row(state, index),
+            move |state: &State, index| {
+                render
+                    .render_row(state, index)
+                    .transition(Transition::opacity())
+            },
         )
         .virtual_rows_version(state.rows_version)
         .on_visible_rows(State::show_rows);
@@ -84,7 +88,7 @@ pub(super) fn pane(state: &State, kit: &Kit, viewport_width: f32) -> El {
                 .w_full(),
         );
     }
-    pane
+    pane.children(super::pulse::hint(state, kit))
 }
 
 struct DiffLook {
@@ -132,16 +136,24 @@ impl DiffLook {
             collapsed,
         );
         match &entry.kind {
-            RowKind::Line(number) => memo(&entry.key, (version, horizontal.is_some()), || {
+            RowKind::Line(number) => {
                 if let FileBody::Text(diff) = file.body(filter)
                     && let Some(line) = diff.lines.get(*number)
                     && let Some(change) = filter.change(line)
                 {
-                    self.code_line(line, change, filter, state.wrap)
+                    let pulse = state
+                        .pulse
+                        .contains(filter, entry.file, line.worktree)
+                        .then(|| state.pulse.opacity());
+                    memo(
+                        &entry.key,
+                        (version, horizontal.is_some(), pulse.is_some()),
+                        || self.code_line(line, change, filter, state.wrap, pulse),
+                    )
                 } else {
                     el().h(LINE_HEIGHT)
                 }
-            }),
+            }
             kind => memo(&entry.key, (version, horizontal), || {
                 let row = match kind {
                     RowKind::Header => {
@@ -163,7 +175,14 @@ impl DiffLook {
         }
     }
 
-    fn code_line(&self, line: &Line, change: ThreeWayChange, filter: Filter, wrap: bool) -> El {
+    fn code_line(
+        &self,
+        line: &Line,
+        change: ThreeWayChange,
+        filter: Filter,
+        wrap: bool,
+        pulse: Option<&Live<f32>>,
+    ) -> El {
         let c = &self.kit.c;
         let p = Provenance::new(change, &self.kit);
         let (old, new) = filter.columns();
@@ -194,6 +213,7 @@ impl DiffLook {
             .key("gutter")
             .items_stretch()
             .fill(p.gutter)
+            .children(pulse.map(|opacity| super::pulse::wash(&self.kit, opacity, 0.0)))
             .child(
                 el().w(EDGE_WIDTH)
                     .fill(if p.working { c.info.icon } else { p.gutter }),
@@ -238,6 +258,7 @@ impl DiffLook {
                     .min_w(0.0)
                     .pl(9.0)
                     .pr(10.0)
+                    .children(pulse.map(|opacity| super::pulse::wash(&self.kit, opacity, 0.0)))
                     .child(code.key("code")),
             );
         if wrap {

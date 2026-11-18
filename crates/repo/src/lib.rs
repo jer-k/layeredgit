@@ -8,12 +8,11 @@
 mod batch;
 mod diff;
 mod git;
+mod status;
 
-use std::collections::hash_map::DefaultHasher;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::fs::{self, File};
-use std::hash::{Hash, Hasher};
 use std::io::{self, Read};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::MetadataExt;
@@ -130,6 +129,7 @@ impl std::error::Error for Error {
 pub struct Revisions {
     merge_base: Option<String>,
     head: Option<String>,
+    base_tip: Option<String>,
 }
 
 impl Revisions {
@@ -141,6 +141,11 @@ impl Revisions {
     /// Returns the HEAD commit ID, or `None` for an unborn HEAD.
     pub fn head(&self) -> Option<&str> {
         self.head.as_deref()
+    }
+
+    /// Returns the resolved comparison ref's tip, even when it is past the merge base.
+    pub fn base_tip(&self) -> Option<&str> {
+        self.base_tip.as_deref()
     }
 }
 
@@ -202,15 +207,14 @@ fn has_binary_prefix(bytes: &[u8]) -> bool {
     bytes.iter().take(BINARY_PREFIX).any(|&byte| byte == 0)
 }
 
-/// An opaque, equality-comparable snapshot of Git status and index metadata.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ChangeToken(u64);
+pub use status::ChangeToken;
 
 /// A local Git working tree and its reusable blob reader.
 #[derive(Debug)]
 pub struct Repo {
     root: PathBuf,
     git_dir: PathBuf,
+    common_dir: PathBuf,
     index_path: PathBuf,
     byte_limit: u64,
     batch: Option<Batch>,
@@ -259,6 +263,10 @@ impl Repo {
         }
         let root = path_from_bytes(single_line(&success(output, operation)?, operation)?);
         let git_dir = git::read_path(&root, &["rev-parse", "--absolute-git-dir"])?;
+        let common_dir = git::read_path(
+            &root,
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        )?;
         let index_path = git::read_path(
             &root,
             &["rev-parse", "--path-format=absolute", "--git-path", "index"],
@@ -266,6 +274,7 @@ impl Repo {
         Ok(Self {
             root,
             git_dir,
+            common_dir,
             index_path,
             byte_limit: DEFAULT_BYTE_LIMIT,
             batch: None,
@@ -281,6 +290,11 @@ impl Repo {
     /// Returns the absolute Git directory for this worktree.
     pub fn git_dir(&self) -> &Path {
         &self.git_dir
+    }
+
+    /// Returns the absolute directory containing shared refs and objects.
+    pub fn common_dir(&self) -> &Path {
+        &self.common_dir
     }
 
     /// Sets the maximum size of an individual file read, in bytes.
@@ -357,6 +371,7 @@ impl Repo {
                 return Ok(Revisions {
                     merge_base: None,
                     head: None,
+                    base_tip: None,
                 });
             }
             success(exists, "show-ref HEAD target")?;
@@ -378,6 +393,7 @@ impl Repo {
         Ok(Revisions {
             merge_base: Some(merge_base),
             head: Some(head),
+            base_tip: Some(tip),
         })
     }
 
@@ -580,40 +596,6 @@ impl Repo {
             }
         }
         Ok(None)
-    }
-
-    /// Computes a polling token from porcelain status (including the HEAD OID)
-    /// and the index file's modification time and size.
-    ///
-    /// It can miss further edits to an already-dirty or untracked file when its
-    /// status stays the same. It does not track base-ref movement. Use file
-    /// watching or explicit refreshes for those cases.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if Git cannot read status or index metadata is inaccessible.
-    pub fn change_token(&self) -> Result<ChangeToken, Error> {
-        let output = git::run(command(&self.root).args([
-            "status",
-            "--porcelain=v2",
-            "-z",
-            "--branch",
-            "--no-ahead-behind",
-            "--no-show-stash",
-            "--untracked-files=all",
-            "--ignore-submodules=none",
-            "--no-renames",
-        ]))?;
-        let mut hasher = DefaultHasher::new();
-        success(output, "status")?.hash(&mut hasher);
-        if let Some(metadata) = optionally(fs::metadata(&self.index_path), "stat Git index")? {
-            metadata.len().hash(&mut hasher);
-            metadata
-                .modified()
-                .map_err(|error| Error::io("read Git index modification time", error))?
-                .hash(&mut hasher);
-        }
-        Ok(ChangeToken(hasher.finish()))
     }
 }
 
