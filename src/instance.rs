@@ -107,7 +107,7 @@ mod mac {
             Ok(())
         } else {
             Err(io::Error::other(
-                "the running Git Viewer did not accept the launch",
+                "the running layeredgit did not accept the launch",
             ))
         }
     }

@@ -1,4 +1,4 @@
-# Git Viewer
+# layeredgit
 
 A local Git branch review app built with [Rune](https://github.com/anomalyco/rune).
 The diff compares a chosen head to its merge base and layers in any changes
@@ -13,14 +13,14 @@ newer installed.
 just install
 ```
 
-This builds the release app, installs `~/Applications/Git Viewer.app`, and puts
-`git-review` in `~/.local/bin`. Add `~/.local/bin` to your shell's `PATH`, then run
-`git review` anywhere inside a working tree to add or select it in Git Viewer.
-To override its base, run `git review BASE`. The default tries `origin/HEAD`,
+This builds the release app, installs `~/Applications/layeredgit.app`, and puts
+`layeredgit` in `~/.local/bin`. Add `~/.local/bin` to your shell's `PATH`, then run
+`layeredgit` anywhere inside a working tree to add or select it in the app.
+To override its base, run `layeredgit BASE`. The default tries `origin/HEAD`,
 then `main`, then `master`.
-Run `git review --help` for the manual or `git review -h` for a short usage line.
+Run `layeredgit --help` for usage or `man layeredgit` for the manual.
 
-Open **Git Viewer** from Finder, Spotlight, or the Dock to restore your
+Open **layeredgit** from Finder, Spotlight, or the Dock to restore your
 repositories in one window. Use **+** or **⌘O** to add a working tree, **⌘1–9**
 to jump to a repository, and **⌘[** / **⌘]** to cycle. Right-click a repository
 to remove it from the sidebar without changing anything on disk. Collapse the
@@ -28,16 +28,19 @@ sidebar to make more room for the diff. Closing the window leaves the app in
 the Dock; use **⌘Q** to quit.
 
 Use the **Base** and **HEAD** pickers to search branches or enter a tag, commit
-ID, or revision expression. Git Viewer remembers each repository’s base. HEAD
+ID, or revision expression. The app remembers each repository’s base. HEAD
 defaults to the checkout on launch; **Reset to current** restores it at any
 time. If you choose a branch checked out in another linked worktree, its
 uncommitted changes appear in the review. A branch without a checkout, a
 remote-tracking ref, a tag, or a commit ID shows committed changes only.
 
+On first launch, a fresh installation imports saved repositories, comparison
+bases, sidebar state, panel widths, and window frame from the previous app.
+
 After pulling changes, run `just install` again. Rune's installer swaps the bundle
 in place and relaunches a running app with its original arguments. Remove the
-bundle and launcher with `just uninstall`. For another location, set the same
-`APP_DIR` and `BIN_DIR` on both commands.
+bundle, launcher, and manual with `just uninstall`. For another location,
+set the same `APP_DIR` and `BIN_DIR` on both commands.
 
 ```sh
 APP_DIR="$PWD/target/install-test/Applications" BIN_DIR="$PWD/target/install-test/bin" just install

@@ -7,7 +7,8 @@ pub(crate) const MIN_WINDOW_WIDTH: f32 = 960.0;
 /// Minimum width of the diff pane, including its horizontal padding.
 pub(crate) const MIN_DIFF_WIDTH: f32 = 392.0;
 const COLLAPSED_REPOSITORIES: f32 = 53.0;
-const PREF_KEY: &str = "panel_widths";
+/// Preference key for the repository and file panel widths.
+pub(crate) const WIDTHS_KEY: &str = "panel_widths";
 
 /// The two adjustable columns in a review.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -60,7 +61,7 @@ impl Widths {
     /// Reads saved widths, falling back to defaults for missing or invalid values.
     pub(crate) fn load(prefs: &Prefs) -> Self {
         let mut widths = Self::default();
-        if let Some([repositories, files]) = prefs.get::<[f32; 2]>(PREF_KEY) {
+        if let Some([repositories, files]) = prefs.get::<[f32; 2]>(WIDTHS_KEY) {
             widths.set(Panel::Repositories, repositories);
             widths.set(Panel::Files, files);
         }
@@ -69,7 +70,7 @@ impl Widths {
 
     /// Saves the preferred widths through the caller's preference store.
     pub(crate) fn save(self, prefs: &mut Prefs) -> Result<(), PrefsError> {
-        prefs.set(PREF_KEY, &self.0)
+        prefs.set(WIDTHS_KEY, &self.0)
     }
 
     /// Rounds and clamps a new preference within the panel's intrinsic bounds.

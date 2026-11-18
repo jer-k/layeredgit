@@ -9,7 +9,7 @@ use std::{
 use crate::source::Repository;
 
 pub(crate) const USAGE: &str =
-    "Usage: git-viewer-rune [--repo PATH] [--base REF] [--demo] [--demo-pulse] [Rune options]";
+    "Usage: layeredgit [--repo PATH] [--base REF] [--demo] [--demo-pulse] [Rune options]";
 
 pub(crate) struct Options {
     pub(crate) launch: Launch,

@@ -1,4 +1,4 @@
-# Git Viewer — agent guide
+# layeredgit — agent guide
 
 A local, native app for reviewing a branch against its base the way a GitHub PR
 reads, plus uncommitted working-tree changes layered on top of committed ones.
@@ -32,7 +32,7 @@ Debug builds accept Rune's agent tooling flags, so check every UI change by look
 
 ```sh
 cargo build
-B=target/debug/git-viewer-rune
+B=target/debug/layeredgit
 $B --snap target/snaps/x.png --chrome [--theme dark|light] [--size 1400x900] [--scale 2]
 $B --tree target/snaps/x.json        # element tree: key, role, label, text, rects, colours
 $B --script scripts/ui/<name>.json --out target/snaps/<name>/   # scripted input -> frames

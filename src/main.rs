@@ -17,8 +17,8 @@ mod view;
 
 use std::{env, process::ExitCode};
 
-const APP_NAME: &str = "Git Viewer";
-const APP_ID: &str = "local.git-viewer";
+const APP_NAME: &str = "layeredgit";
+const APP_ID: &str = "local.layeredgit";
 
 #[allow(
     clippy::print_stderr,

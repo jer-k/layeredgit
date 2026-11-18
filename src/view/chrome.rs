@@ -32,14 +32,11 @@ pub(crate) fn review_mark(kit: &Kit, size: f32) -> El {
 
 pub(super) fn toolbar(state: &State, kit: &Kit, insets: ChromeInsets, layer: &mut Vec<El>) -> El {
     let c = &kit.c;
-    let name = state
-        .workspace
-        .as_ref()
-        .map_or("Review changes", |workspace| {
-            workspace
-                .active()
-                .map_or(APP_NAME, |entry| entry.name.as_str())
-        });
+    let name = state.workspace.as_ref().map_or(APP_NAME, |workspace| {
+        workspace
+            .active()
+            .map_or(APP_NAME, |entry| entry.name.as_str())
+    });
     let title = row()
         .items_center()
         .shrink()

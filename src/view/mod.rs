@@ -148,7 +148,7 @@ fn empty(state: &State, kit: &Kit) -> El {
                 .color(kit.c.text_base),
         )
         .child(
-            text("Add a working tree to compare branches and review local changes.")
+            text("Add a working tree to review committed and uncommitted changes together.")
                 .font(kit.ty.ui)
                 .color(kit.c.text_muted)
                 .wrap(),
