@@ -1,0 +1,32 @@
+#!/bin/sh
+# Installed by just install with the executable path for this installation.
+set -eu
+
+app_executable="$HOME/Applications/Git Viewer.app/Contents/MacOS/git-viewer-rune"
+usage='Usage: git review [BASE]
+Open Git Viewer for the working tree containing the current directory.'
+
+case ${1:-} in
+    -h|--help) printf '%s\n' "$usage"; exit 0 ;;
+esac
+if [ "$#" -gt 1 ]; then
+    printf '%s\n' "$usage" >&2
+    exit 2
+fi
+if [ ! -x "$app_executable" ]; then
+    printf 'git review: Git Viewer executable not found at %s\n' "$app_executable" >&2
+    exit 1
+fi
+
+# Keep even a final newline in a directory name. Drop the sentinel and Git's newline.
+root=$(git rev-parse --show-toplevel && printf '.')
+root=${root%?}
+root=${root%?}
+if [ "$#" -eq 1 ]; then
+    set -- --repo "$root" "--base=$1"
+else
+    set -- --repo "$root"
+fi
+# Launch Services discards additional argv for a running app. The executable
+# accepts the original argv and forwards it to the first process when needed.
+nohup "$app_executable" "$@" </dev/null >/dev/null 2>&1 &

@@ -10,11 +10,12 @@ pub(crate) use pulse::PulseDirection;
 #[cfg(test)]
 mod tests;
 
-use std::{cell::Cell, collections::HashSet, ops::Range, sync::Arc};
+use std::{cell::Cell, collections::HashSet, ffi::OsString, ops::Range, sync::Arc};
 
 use rune::{Key, KeyEvent, Tx, Waker};
 
 use crate::{
+    desktop::{ReviewSession, open_shortcut},
     model::{Filter, Review, ReviewRows, RowKind, fresh::Replacement},
     palette::Palette,
     source::{Refresh, Repository},
@@ -30,6 +31,7 @@ pub(crate) enum Status {
 }
 
 pub(crate) struct State {
+    pub(crate) session: Option<ReviewSession>,
     pub(crate) review: Arc<Review>,
     pub(crate) status: Status,
     refresh: Option<Refresh>,
@@ -90,6 +92,7 @@ impl State {
             sidebar.select(file);
         }
         Self {
+            session: None,
             review: Arc::new(review),
             status,
             refresh,
@@ -155,6 +158,25 @@ impl State {
         }
     }
 
+    pub(crate) fn title(&mut self, tx: &mut Tx) {
+        if let Some(session) = &mut self.session {
+            session.set_title(None, tx);
+        }
+    }
+
+    pub(crate) fn set_base(&mut self, base: OsString, tx: &mut Tx) {
+        if let Some(refresh) = &mut self.refresh {
+            refresh.set_base(base, tx);
+        }
+    }
+
+    pub(crate) fn close(&mut self, _: &mut Tx) {
+        self.refresh = None;
+        if let Some(session) = &self.session {
+            session.close();
+        }
+    }
+
     pub(crate) fn poll(&mut self, now: f64, tx: &mut Tx) -> bool {
         self.reveal_sidebar(tx);
         let pulse_ended = self.pulse.files().next().is_some() && {
@@ -192,6 +214,9 @@ impl State {
             same_comparison,
         } = update;
         let old = std::mem::replace(&mut self.review, review);
+        if let Some(session) = &mut self.session {
+            session.set_title(Some(&self.review.head_label), tx);
+        }
         let loaded = matches!(self.status, Status::Ready { .. });
         self.status = ready();
         self.review_version = self.review_version.wrapping_add(1);
@@ -429,6 +454,12 @@ impl State {
     pub(crate) fn key(&mut self, event: &KeyEvent, tx: &mut Tx) -> bool {
         #[cfg(feature = "dev")]
         if self.tuning.key(event, self.system_dark.get(), tx) {
+            return true;
+        }
+        if open_shortcut(event)
+            && let Some(session) = &self.session
+        {
+            session.show_start();
             return true;
         }
         if event.mods.cmd || event.mods.ctrl || event.mods.alt {

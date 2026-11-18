@@ -13,7 +13,7 @@ mod refresh;
 mod watch;
 pub(crate) use refresh::Refresh;
 
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Repository {
     pub(crate) path: PathBuf,
     pub(crate) base: Option<OsString>,

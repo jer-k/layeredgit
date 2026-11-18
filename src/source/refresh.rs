@@ -1,6 +1,6 @@
 //! Schedules Git checks without waiting for them in Rune's callbacks.
 
-use std::sync::Arc;
+use std::{ffi::OsString, sync::Arc};
 
 use repo::{ChangeToken, Error, Repo};
 use rune::{Latest, Tx, Waker};
@@ -56,6 +56,14 @@ impl Refresh {
         self.started = true;
         self.forced = true;
         tx.wake_at(tx.clock());
+    }
+
+    pub(crate) fn set_base(&mut self, base: OsString, tx: &mut Tx) {
+        if self.target.base.as_ref() != Some(&base) {
+            self.target.base = Some(base);
+            self.pending.cancel();
+            self.force(tx);
+        }
     }
 
     pub(crate) fn visibility(&mut self, visible: bool, tx: &mut Tx) {

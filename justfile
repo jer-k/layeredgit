@@ -24,3 +24,11 @@ check: fmt-check lint test
 # Point git at the versioned hooks in .githooks.
 install-hooks:
     git config core.hooksPath .githooks
+
+# Build the release binary and install Git Viewer.app and git-review.
+install:
+    python3 scripts/install-mac-app.py install
+
+# Remove Git Viewer.app and git-review from the selected directories.
+uninstall:
+    python3 scripts/install-mac-app.py uninstall
