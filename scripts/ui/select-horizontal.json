@@ -1,0 +1,9 @@
+{
+  "events": [
+    {"t": 0.12, "type": "tap", "key": "file/src/lib.rs"},
+    {"t": 0.55, "type": "wheel", "x": 900, "y": 357, "dx": -80, "dy": 0},
+    {"t": 0.90, "type": "drag", "x": 721, "y": 317, "dx": 30, "dy": 20, "dur": 0.4},
+    {"t": 1.36, "type": "key", "cmd": true, "name": "c"},
+    {"t": 1.5, "type": "mark", "name": "end"}
+  ]
+}

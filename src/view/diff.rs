@@ -11,6 +11,7 @@ use rune_kit::{Kit, syntax::SyntaxTheme};
 use crate::{
     model::{Counts, FileBody, FileDiff, Filter, Line, RowKind},
     palette::Palette,
+    selection::{CodeStyle, DiffSelection, SCROLL_KEY},
     state::{HEADER_HEIGHT, State},
 };
 
@@ -22,7 +23,13 @@ const MARKER_WIDTH: f32 = 35.0;
 const CODE_SIZE: f32 = 12.0;
 const CODE_PADDING: f32 = 19.0;
 
-pub(super) fn pane(state: &State, kit: &Kit, palette: Palette, viewport_width: f32) -> El {
+pub(super) fn pane(
+    state: &State,
+    kit: &Kit,
+    palette: Palette,
+    viewport_width: f32,
+    scale: f32,
+) -> El {
     // Keep the width stable while the virtual window moves through shorter rows.
     #[allow(
         clippy::cast_precision_loss,
@@ -47,6 +54,7 @@ pub(super) fn pane(state: &State, kit: &Kit, palette: Palette, viewport_width: f
             horizontal.then(|| viewport_width.to_bits()),
             show_counts,
             state.pulse.files().next().is_some(),
+            scale.to_bits(),
         ),
         || {
             diff_list(
@@ -55,6 +63,7 @@ pub(super) fn pane(state: &State, kit: &Kit, palette: Palette, viewport_width: f
                 palette,
                 horizontal.then_some(viewport_width),
                 show_counts,
+                scale,
             )
         },
     );
@@ -64,7 +73,7 @@ pub(super) fn pane(state: &State, kit: &Kit, palette: Palette, viewport_width: f
         list
     };
     let scroll = col()
-        .key("diff-scroll")
+        .key(SCROLL_KEY)
         .grow(1.0)
         .min_h(0.0)
         .scroll(ScrollSpec {
@@ -72,13 +81,14 @@ pub(super) fn pane(state: &State, kit: &Kit, palette: Palette, viewport_width: f
         })
         .on_scroll_offset({
             let position = Rc::clone(&state.scroll_position);
-            move |at| position.set(at.offset)
+            move |at| position.set(at)
         });
     let scroll = if horizontal {
         scroll.scroll_xy()
     } else {
         scroll
     };
+    let scroll = state.selection.pane(scroll, code_inset(palette.edge_width));
     let scroll = scroll.child(list);
     let mut pane = col().key("diff").grow(1.0).min_h(0.0).child(scroll);
     // A file header can be far outside the virtual window while its file is still in view.
@@ -104,8 +114,9 @@ fn diff_list(
     palette: Palette,
     horizontal: Option<f32>,
     show_counts: bool,
+    scale: f32,
 ) -> El {
-    let look = Rc::new(DiffLook::new(kit, palette, horizontal, show_counts));
+    let look = Rc::new(DiffLook::new(kit, palette, horizontal, show_counts, scale));
     col()
         .key("diff-rows")
         .role("list")
@@ -143,10 +154,17 @@ struct DiffLook {
     folding: Color,
     horizontal: Option<f32>,
     show_counts: bool,
+    scale: f32,
 }
 
 impl DiffLook {
-    fn new(kit: &Kit, palette: Palette, horizontal: Option<f32>, show_counts: bool) -> Self {
+    fn new(
+        kit: &Kit,
+        palette: Palette,
+        horizontal: Option<f32>,
+        show_counts: bool,
+        scale: f32,
+    ) -> Self {
         Self {
             kit: kit.clone(),
             palette,
@@ -158,6 +176,7 @@ impl DiffLook {
             },
             horizontal,
             show_counts,
+            scale,
             folding: tint(
                 kit.c.bg_base,
                 kit.c.info.icon,
@@ -195,8 +214,13 @@ impl DiffLook {
                         .then(|| state.pulse.opacity());
                     memo(
                         &entry.key,
-                        (version, self.horizontal.is_some(), pulse.is_some()),
-                        || self.code_line(line, change, filter, state.wrap, pulse),
+                        (
+                            version,
+                            self.horizontal.is_some(),
+                            pulse.is_some(),
+                            self.scale.to_bits(),
+                        ),
+                        || self.code_line(state, (entry.file, *number), line, change, pulse),
                     )
                 } else {
                     el().h(LINE_HEIGHT)
@@ -215,11 +239,15 @@ impl DiffLook {
                         self.show_counts,
                         &self.kit,
                     ),
-                    RowKind::Hunk { label, .. } => self.hunk(label, filter),
+                    RowKind::Hunk { label, .. } => {
+                        DiffSelection::background(self.hunk(label, filter))
+                    }
                     RowKind::Fold { range, count } => self.fold(entry.file, range.clone(), *count),
-                    RowKind::Newline(version) => self.newline(version),
-                    RowKind::Placeholder(message) => self.placeholder(message),
-                    RowKind::Space => self.space(collapsed),
+                    RowKind::Newline(version) => DiffSelection::background(self.newline(version)),
+                    RowKind::Placeholder(message) => {
+                        DiffSelection::background(self.placeholder(message))
+                    }
+                    RowKind::Space => DiffSelection::background(self.space(collapsed)),
                     RowKind::Line(_) => el().h(LINE_HEIGHT),
                 });
                 if let Some(width) = self.horizontal {
@@ -233,13 +261,13 @@ impl DiffLook {
 
     fn code_line(
         &self,
+        state: &State,
+        id: (usize, usize),
         line: &Line,
         change: ThreeWayChange,
-        filter: Filter,
-        wrap: bool,
         pulse: Option<&Live<f32>>,
     ) -> El {
-        let c = &self.kit.c;
+        let (filter, wrap) = (state.filter, state.wrap);
         let p = Provenance::new(change, &self.kit, self.palette);
         let (old, new) = filter.columns();
         let head_only = change == ThreeWayChange::CommittedThenRemoved;
@@ -248,23 +276,7 @@ impl DiffLook {
         } else {
             line.number(new).map_or_else(String::new, |n| n.to_string())
         };
-        let highlights = line.highlights(filter);
-        let code = if highlights.is_empty() {
-            text(&line.text)
-        } else {
-            rich(&line.text, self.syntax.spans(highlights, 0))
-        };
-        let code = code.font(self.code).color(c.text_base).w_full();
-        let code = if wrap {
-            code.wrap_anywhere()
-        } else {
-            code.single_line()
-        };
-        let code = if let Some(strike) = p.strike {
-            code.strike(0, line.text.len(), Some(strike))
-        } else {
-            code
-        };
+        let code = self.code_text(state, id, line, p.strike);
         let wash =
             || pulse.map(|opacity| super::pulse::wash(&self.kit, self.palette, opacity, 0.0));
         let mut gutter = row()
@@ -309,7 +321,7 @@ impl DiffLook {
                     .child(text(p.marker).font(self.code).color(p.ink)),
             )
         };
-        gutter = gutter.child(marker);
+        gutter = DiffSelection::background(gutter.child(marker));
         if self.horizontal.is_some() {
             gutter = gutter.sticky_left(0.0);
         }
@@ -326,13 +338,50 @@ impl DiffLook {
                     .pl(9.0)
                     .pr(10.0)
                     .children(wash())
-                    .child(code.key("code")),
+                    .child(code),
             );
         if wrap {
             line_row
         } else {
             line_row.h(LINE_HEIGHT)
         }
+    }
+
+    fn code_text(
+        &self,
+        state: &State,
+        id: (usize, usize),
+        line: &Line,
+        strike: Option<Color>,
+    ) -> El {
+        let spans = self.syntax.spans(line.highlights(state.filter), 0);
+        let code = if spans.is_empty() {
+            text(&line.text)
+        } else {
+            rich(&line.text, spans.clone())
+        };
+        let code = code
+            .key("code")
+            .font(self.code)
+            .color(self.kit.c.text_base)
+            .w_full();
+        let code = if state.wrap {
+            code.wrap_anywhere()
+        } else {
+            code.single_line()
+        };
+        let code = if let Some(strike) = strike {
+            code.strike(0, line.text.len(), Some(strike))
+        } else {
+            code
+        };
+        let style = CodeStyle {
+            font: self.code,
+            scale: self.scale,
+            wrap: state.wrap,
+            highlight: self.kit.selection(),
+        };
+        state.selection.code(id, code, style, spans)
     }
 
     fn number(&self, number: String, p: &Provenance, head_only: bool) -> El {

@@ -13,6 +13,81 @@ use crate::{
 use super::*;
 
 #[test]
+fn selection_copies_each_filters_display_order() {
+    use selection::Selection;
+
+    let review = review_of(text_file([
+        "start\r\n\tbase  \r\nend\n",
+        "start\r\n\thead\r\nend\n",
+        "start\r\n\twork\r\nend",
+    ]));
+    for (filter, expected) in [
+        (Filter::All, "start\n\tbase  \n\thead\n\twork\nend"),
+        (Filter::Committed, "start\n\tbase  \n\thead\nend"),
+        (Filter::Uncommitted, "start\n\thead\n\twork\nend"),
+    ] {
+        let rows = ReviewRows::new(&review, filter, &HashSet::new(), &HashSet::new());
+        assert!(
+            rows.rows
+                .iter()
+                .any(|row| matches!(row.kind, RowKind::Hunk { .. }))
+        );
+        assert_eq!(
+            rows.rows
+                .iter()
+                .any(|row| matches!(row.kind, RowKind::Newline(_))),
+            filter != Filter::Committed,
+        );
+        let all = Selection::all(&review, &rows, filter, 0).unwrap();
+        assert_eq!(all.copy(&review, &rows, filter).as_deref(), Some(expected));
+    }
+}
+
+#[test]
+fn backward_selection_copies_partial_rows_across_a_fold() {
+    use selection::{Point, Selection};
+
+    let source = |first, last| {
+        format!(
+            "{first}\ncontext 1\ncontext 2\ncontext 3\nfold me\ncontext 4\ncontext 5\ncontext 6\n{last}\n"
+        )
+    };
+    let base = source("éOLD\tleft", "old last");
+    let head = source("éNEW\tleft", "new\tright");
+    let review = review_of(text_file([&base, &head, &head]));
+    let filter = Filter::All;
+    let rows = ReviewRows::new(&review, filter, &HashSet::new(), &HashSet::new());
+    assert!(
+        rows.rows
+            .iter()
+            .any(|row| matches!(row.kind, RowKind::Fold { .. }))
+    );
+    let all = Selection::all(&review, &rows, filter, 0).unwrap();
+    let selection = Selection {
+        anchor: Point {
+            byte: 5,
+            ..all.focus
+        },
+        focus: Point {
+            byte: 2,
+            ..all.anchor
+        },
+        ..all
+    };
+    assert_eq!(
+        selection.copy(&review, &rows, filter).as_deref(),
+        Some(
+            "OLD\tleft\néNEW\tleft\ncontext 1\ncontext 2\ncontext 3\ncontext 4\ncontext 5\ncontext 6\nold last\nnew\tr"
+        )
+    );
+    let caret = Selection {
+        focus: all.anchor,
+        ..all
+    };
+    assert_eq!(caret.copy(&review, &rows, filter), None);
+}
+
+#[test]
 fn demo_covers_all_lifetimes_and_counts_them_per_transition() {
     let review = Review::new(demo::review());
     let file = &review.files[0];

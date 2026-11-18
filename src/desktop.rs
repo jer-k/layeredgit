@@ -16,6 +16,7 @@ use crate::{
 };
 
 const SIZE: (f32, f32) = (1360.0, 820.0);
+pub(crate) const FONT_FAMILIES: (&str, &str) = ("Inter", "ui-monospace");
 
 pub(crate) fn repo_name(root: &Path) -> String {
     root.file_name()
@@ -125,7 +126,7 @@ fn window(size: (f32, f32)) -> App<State> {
             state.setup(waker);
         }),
         poll: Some(State::poll),
-        families: ("Inter", "ui-monospace"),
+        families: FONT_FAMILIES,
         min_size: Some((MIN_WINDOW_WIDTH, 480.0)),
         ..AppSpec::new(
             APP_NAME,

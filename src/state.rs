@@ -14,12 +14,13 @@ mod tests;
 
 use std::{cell::Cell, collections::HashSet, ops::Range, rc::Rc, sync::Arc};
 
-use rune::{Key, KeyEvent, Tx, Waker};
+use rune::{Key, KeyEvent, ScrollPos, Tx, Waker};
 
 use crate::{
     model::{Filter, Review, ReviewRows, RowKind, fresh::Replacement},
     palette::Palette,
     repositories::{Visibility, Workspace},
+    selection::DiffSelection,
     source::{Refresh, RefreshEvent, Repository},
 };
 
@@ -42,7 +43,8 @@ pub(crate) struct State {
     pub(crate) status: Status,
     pub(crate) has_worktree: bool,
     previous_live_filter: Filter,
-    pub(crate) scroll_position: Rc<Cell<[f32; 2]>>,
+    pub(crate) scroll_position: Rc<Cell<ScrollPos>>,
+    pub(crate) selection: DiffSelection,
     refresh: Option<Refresh>,
     demo_reload: Option<Replacement>,
     pub(crate) headless_reduced_motion: bool,
@@ -60,7 +62,7 @@ pub(crate) struct State {
     pub(crate) sticky_file: Option<usize>,
     pub(crate) collapsed: HashSet<usize>,
     expanded: HashSet<(usize, usize, usize)>,
-    visible_rows: Range<usize>,
+    pub(crate) visible_rows: Range<usize>,
     navigation: Option<usize>,
     sidebar_reveal: Option<usize>,
 }
@@ -108,6 +110,7 @@ impl State {
             has_worktree: true,
             previous_live_filter: Filter::All,
             scroll_position: Rc::default(),
+            selection: DiffSelection::default(),
             refresh,
             demo_reload: None,
             headless_reduced_motion: false,
@@ -494,6 +497,14 @@ impl State {
         if event.mods.cmd || event.mods.ctrl || event.mods.alt {
             return false;
         }
+        if self.workspace.as_ref().is_some_and(|workspace| {
+            workspace
+                .picker
+                .iter()
+                .any(rune_kit::ComboboxState::is_open)
+        }) {
+            return false;
+        }
         match &event.key {
             Key::Text(text) => match text.as_str() {
                 "j" => self.step_hunk(true, tx),
@@ -569,6 +580,7 @@ impl State {
     }
 
     fn set_rows(&mut self, rows: ReviewRows) {
+        self.selection.clear();
         self.rows = rows;
         self.pulse.project(&self.rows, &self.review, self.filter);
         self.rows_version = self.rows_version.wrapping_add(1);

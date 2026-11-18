@@ -65,6 +65,7 @@ pub(crate) fn review(state: &State, cx: &mut Cx<State>) -> El {
                 palette,
                 files,
                 diff_width,
+                cx.env().scale,
             )
         }
     };
@@ -174,6 +175,7 @@ fn workspace(
     palette: Palette,
     files: PanelRoom,
     diff_width: f32,
+    scale: f32,
 ) -> El {
     let mut pane = col()
         .key("review-pane")
@@ -206,7 +208,7 @@ fn workspace(
             palette,
             diff_width > 0.0 && diff_width < 565.0,
         ))
-        .child(diff::pane(state, kit, palette, diff_width))
+        .child(diff::pane(state, kit, palette, diff_width, scale))
     };
     row()
         .key("workspace")

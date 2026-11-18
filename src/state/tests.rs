@@ -45,7 +45,9 @@ fn repository_selection_restores_the_document_and_routes_validation_to_its_owner
     state.toggle_wrap(&mut tx);
     state.toggle_file(0, &mut tx);
     state.jump_to_file(1, &mut tx);
-    state.scroll_position.set([0.0, 85.0]);
+    let mut position = state.scroll_position.get();
+    position.offset = [0.0, 85.0];
+    state.scroll_position.set(position);
     let old_review = Arc::clone(&state.review);
     state.choose_revision(Side::Head, Some("another-head".into()), &mut tx);
     let choice = receive
@@ -99,7 +101,7 @@ fn repository_selection_restores_the_document_and_routes_validation_to_its_owner
         Some(std::ffi::OsStr::new("another-base"))
     );
     assert_eq!(
-        state.scroll_position.get().map(f32::to_bits),
+        state.scroll_position.get().offset.map(f32::to_bits),
         [0.0_f32.to_bits(), 85.0_f32.to_bits()]
     );
     assert_eq!(
