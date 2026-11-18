@@ -112,6 +112,24 @@ struct Delta {
 }
 
 pub(crate) fn changed_files(repo: &Repo, revisions: &Revisions) -> Result<Vec<ChangedFile>, Error> {
+    let Some(root) = revisions.worktree() else {
+        let committed = match (revisions.merge_base(), revisions.head()) {
+            (Some(base), Some(head)) => diff(repo.root(), &[base, head])?,
+            _ => Vec::new(),
+        };
+        let mut files: Vec<_> = committed
+            .into_iter()
+            .map(|delta| ChangedFile {
+                base: delta.before,
+                head: delta.after,
+                worktree: None,
+                committed: delta.change,
+                uncommitted: Change::NONE,
+            })
+            .collect();
+        files.sort_by(|left, right| left.path().cmp(&right.path()));
+        return Ok(files);
+    };
     let (committed, head_tree) =
         if let (Some(base), Some(head)) = (revisions.merge_base(), revisions.head()) {
             (diff(&repo.root, &[base, head])?, head.to_owned())
@@ -126,8 +144,8 @@ pub(crate) fn changed_files(repo: &Repo, revisions: &Revisions) -> Result<Vec<Ch
                 git::oid(&git::success(output, operation)?, operation)?,
             )
         };
-    let working = diff(&repo.root, &[&head_tree])?;
-    Ok(join_layers(committed, working, untracked(repo)?))
+    let working = diff(root, &[&head_tree])?;
+    Ok(join_layers(committed, working, untracked(root)?))
 }
 
 fn join_layers(
@@ -352,21 +370,17 @@ fn version(mode: &[u8], path: &[u8]) -> Result<Option<FileVersion>, Error> {
     }))
 }
 
-fn untracked(repo: &Repo) -> Result<Vec<Delta>, Error> {
+fn untracked(root: &Path) -> Result<Vec<Delta>, Error> {
     let operation = "ls-files --others";
-    let output = git::run(git::command(&repo.root).args([
-        "ls-files",
-        "--others",
-        "--exclude-standard",
-        "-z",
-    ]))?;
+    let output =
+        git::run(git::command(root).args(["ls-files", "--others", "--exclude-standard", "-z"]))?;
     let paths = git::success(output, operation)?;
     let mut files = Vec::new();
     if paths.is_empty() {
         return Ok(files);
     }
-    let mut attrs = diff_attributes(&repo.root, &paths)?;
-    let big_file_threshold = big_file_threshold(&repo.root)?;
+    let mut attrs = diff_attributes(root, &paths)?;
+    let big_file_threshold = big_file_threshold(root)?;
     for path in git::records(&paths, operation)? {
         let attribute = attrs.remove(path).flatten();
         if let Some(directory) = path.strip_suffix(b"/") {
@@ -377,7 +391,7 @@ fn untracked(repo: &Repo) -> Result<Vec<Delta>, Error> {
                 None,
             ));
         } else if let Some(delta) = untracked_file(
-            repo,
+            root,
             git::path_from_bytes(path),
             attribute,
             big_file_threshold,
@@ -480,12 +494,12 @@ fn binary_drivers(root: &Path) -> Result<HashMap<Vec<u8>, bool>, Error> {
 }
 
 fn untracked_file(
-    repo: &Repo,
+    root: &Path,
     path: PathBuf,
     binary: Option<bool>,
     big_file_threshold: u64,
 ) -> Result<Option<Delta>, Error> {
-    let Some((full_path, metadata)) = repo.worktree_metadata(&path)? else {
+    let Some((full_path, metadata)) = Repo::worktree_metadata(root, &path)? else {
         return Ok(None);
     };
     let kind = if metadata.is_symlink() {

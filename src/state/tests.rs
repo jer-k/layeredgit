@@ -18,6 +18,104 @@ use crate::{
 use super::*;
 
 #[test]
+fn repository_selection_restores_the_document_and_routes_validation_to_its_owner() {
+    use crate::{
+        preferences::Preferences,
+        repositories::{Request, Side},
+    };
+
+    let (send, receive) = mpsc::channel();
+    let mut state = State::with_workspace(Workspace::live(send));
+    let mut tx = Tx::default();
+    state.restore_workspace(
+        Preferences {
+            repositories: vec![("/first".into(), None), ("/second".into(), None)],
+            selected: None,
+            collapsed: false,
+        },
+        false,
+        &mut tx,
+    );
+    for entry in &mut state.workspace.as_mut().unwrap().entries {
+        entry.document = Some(Box::new(State::new(review(None), ready(), None)));
+    }
+
+    state.select_repository(0, &mut tx);
+    state.set_filter(Filter::Committed, &mut tx);
+    state.toggle_wrap(&mut tx);
+    state.toggle_file(0, &mut tx);
+    state.jump_to_file(1, &mut tx);
+    state.scroll_position.set([0.0, 85.0]);
+    let old_review = Arc::clone(&state.review);
+    state.choose_revision(Side::Head, Some("another-head".into()), &mut tx);
+    let choice = receive
+        .try_iter()
+        .find_map(|request| match request {
+            Request::Choose(choice) => Some(choice),
+            _ => None,
+        })
+        .unwrap();
+    state.finish_choice(choice, Ok(()), &mut tx);
+    state.choose_revision(Side::Base, Some("another-base".into()), &mut tx);
+    let pending = receive
+        .try_iter()
+        .find_map(|request| match request {
+            Request::Choose(choice) => Some(choice),
+            _ => None,
+        })
+        .unwrap();
+
+    state.select_repository(1, &mut tx);
+    state.finish_choice(pending, Ok(()), &mut tx);
+    assert_eq!(
+        state
+            .workspace
+            .as_ref()
+            .unwrap()
+            .active()
+            .unwrap()
+            .repository
+            .base,
+        None
+    );
+    assert_eq!(state.filter, Filter::All);
+    assert!(!state.wrap);
+    state.select_repository(0, &mut tx);
+    assert!(Arc::ptr_eq(&state.review, &old_review));
+    assert_eq!(state.filter, Filter::Committed);
+    assert!(state.wrap);
+    assert_eq!(state.collapsed, HashSet::from([0]));
+    assert_eq!(state.active_file, Some(1));
+    assert_eq!(
+        state
+            .workspace
+            .as_ref()
+            .unwrap()
+            .active()
+            .unwrap()
+            .repository
+            .base
+            .as_deref(),
+        Some(std::ffi::OsStr::new("another-base"))
+    );
+    assert_eq!(
+        state.scroll_position.get().map(f32::to_bits),
+        [0.0_f32.to_bits(), 85.0_f32.to_bits()]
+    );
+    assert_eq!(
+        state
+            .workspace
+            .as_ref()
+            .unwrap()
+            .active()
+            .unwrap()
+            .head
+            .as_deref(),
+        Some(std::ffi::OsStr::new("another-head"))
+    );
+}
+
+#[test]
 fn refresh_keeps_filter_selection_expanded_fold_and_top_line_after_rename() {
     let before = review(None);
     let mut state = State::new(before, ready(), None);

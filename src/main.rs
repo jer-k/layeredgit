@@ -8,9 +8,9 @@ mod input;
 mod instance;
 mod model;
 mod palette;
-mod recents;
+mod preferences;
+mod repositories;
 mod source;
-mod start;
 mod state;
 mod view;
 

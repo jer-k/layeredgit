@@ -5,12 +5,13 @@ git-review \- open Git Viewer for the current working tree
 .B git review
 .RI [ BASE ]
 .SH DESCRIPTION
-Open or focus the review window for the working tree containing the current
-directory. The review shows the merge base, HEAD, and the working tree.
+Add or select the working tree containing the current directory in Git Viewer's
+repository sidebar, and bring the window to the front. The review shows the
+merge base, selected head, and any changes from that head's worktree.
 .PP
 With
 .IR BASE ,
-compare against that Git ref. The default tries
+set the saved comparison base for this repository. The default tries
 .BR origin/HEAD ,
 .BR main ,
 then

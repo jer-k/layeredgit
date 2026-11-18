@@ -1,0 +1,16 @@
+{
+  "events": [
+    {"t": 0.20, "type": "mark", "name": "empty"},
+    {"t": 0.45, "type": "tap", "key": "empty-add-repository"},
+    {"t": 0.75, "type": "file-dialog", "path": "/"},
+    {"t": 1.15, "type": "mark", "name": "invalid-folder"},
+    {"t": 1.65, "type": "key", "name": "o", "cmd": true},
+    {"t": 1.95, "type": "file-dialog", "path": "target/round4-fixtures/docs-lab"},
+    {"t": 2.42, "type": "mark", "name": "added"},
+    {"t": 2.80, "type": "secondary-click", "x": 105, "y": 160},
+    {"t": 3.20, "type": "mark", "name": "remove-menu"},
+    {"t": 3.42, "type": "tap", "key": "repository-context-item0"},
+    {"t": 3.85, "type": "mark", "name": "removed"},
+    {"t": 4.15, "type": "mark", "name": "end"}
+  ]
+}

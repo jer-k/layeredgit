@@ -98,7 +98,7 @@ fn fixture_repository_builds_a_three_way_review() {
     );
     let review = Review::new(input);
     target.base = Some("refs/heads/main".into());
-    assert_eq!(target.load_input().unwrap().base_label, "refs/heads/main");
+    assert_eq!(target.load_input().unwrap().base_label, "main");
 
     assert!(
         !review

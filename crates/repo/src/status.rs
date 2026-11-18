@@ -11,7 +11,14 @@ use crate::{Error, Repo, git, validate_path};
 
 /// An opaque snapshot of Git status and the metadata of its dirty paths and index.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ChangeToken(u64);
+pub struct ChangeToken(u64, bool);
+
+impl ChangeToken {
+    /// Whether this status contains staged, unstaged or untracked changes.
+    pub fn is_dirty(self) -> bool {
+        self.1
+    }
+}
 
 impl Repo {
     /// Computes a polling token from NUL-delimited status and filesystem metadata.
@@ -34,6 +41,7 @@ impl Repo {
         ]))?;
         let status = git::success(output, operation)?;
         let mut hasher = DefaultHasher::new();
+        let mut dirty = false;
         status.hash(&mut hasher);
         for record in git::records(&status, operation)? {
             // Porcelain v2 fixes the number of fields before the path. With
@@ -51,11 +59,12 @@ impl Repo {
                 .map(|path| path.strip_suffix(b"/").unwrap_or(path))
                 .map(git::path_from_bytes)
                 .ok_or(Error::Protocol(operation))?;
+            dirty = true;
             validate_path(&path)?;
             hash_metadata(&self.root.join(path), &mut hasher)?;
         }
         hash_metadata(&self.index_path, &mut hasher)?;
-        Ok(ChangeToken(hasher.finish()))
+        Ok(ChangeToken(hasher.finish(), dirty))
     }
 
     /// Checks a batch of repository-relative paths against Git's ignore rules.

@@ -1,0 +1,26 @@
+{
+  "events": [
+    {"t": 0.22, "type": "tap", "key": "base-picker"},
+    {"t": 0.65, "type": "mark", "name": "base-picker"},
+    {"t": 0.82, "type": "type", "text": "main"},
+    {"t": 1.22, "type": "mark", "name": "base-search"},
+    {"t": 1.55, "type": "key", "name": "Enter"},
+    {"t": 1.85, "type": "tap", "key": "head-picker"},
+    {"t": 2.10, "type": "type", "text": "linked-review", "every": 0.018},
+    {"t": 2.45, "type": "key", "name": "Enter"},
+    {"t": 2.85, "type": "tap", "key": "filter/uncommitted"},
+    {"t": 3.20, "type": "mark", "name": "linked-head"},
+    {"t": 3.50, "type": "tap", "key": "head-picker"},
+    {"t": 3.75, "type": "type", "text": "parked-review", "every": 0.018},
+    {"t": 4.05, "type": "key", "name": "Enter"},
+    {"t": 4.48, "type": "mark", "name": "committed-only"},
+    {"t": 4.75, "type": "tap", "key": "head-picker"},
+    {"t": 4.95, "type": "type", "text": "not-a-ref", "every": 0.018},
+    {"t": 5.20, "type": "key", "name": "Enter"},
+    {"t": 5.52, "type": "mark", "name": "invalid-revision"},
+    {"t": 5.80, "type": "tap", "key": "head-picker"},
+    {"t": 6.08, "type": "tap", "key": "head-picker-option-reset"},
+    {"t": 6.50, "type": "mark", "name": "reset-head"},
+    {"t": 6.85, "type": "mark", "name": "end"}
+  ]
+}
