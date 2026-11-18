@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>Layeredgit · Diff Lines</title>
+  <defs>
+    <path id="tile" d="M356 100H668C853 100 924 171 924 356V668C924 853 853 924 668 924H356C171 924 100 853 100 668V356C100 171 171 100 356 100Z"/>
+    <linearGradient id="shell" x2=".85" y2="1">
+      <stop stop-color="#343044"/>
+      <stop offset="1" stop-color="#1A1929"/>
+    </linearGradient>
+    <linearGradient id="rim" x2="0" y2="1">
+      <stop stop-color="#D4C9E9" stop-opacity=".45"/>
+      <stop offset="1" stop-color="#9488B5" stop-opacity=".14"/>
+    </linearGradient>
+    <linearGradient id="diff" gradientUnits="userSpaceOnUse" x1="0" y1="285" x2="0" y2="739">
+      <stop stop-color="#CBF7E5"/>
+      <stop offset=".64" stop-color="#85E5C1"/>
+      <stop offset=".64" stop-color="#A4CBFF"/>
+      <stop offset="1" stop-color="#7EAFFF"/>
+    </linearGradient>
+    <filter id="shadow" x="-.2" y="-.2" width="1.4" height="1.4">
+      <feGaussianBlur stdDeviation="22"/>
+    </filter>
+  </defs>
+  <use href="#tile" transform="translate(0 20)" fill="#100A1C" opacity=".36" filter="url(#shadow)"/>
+  <use href="#tile" fill="url(#shell)" stroke="url(#rim)" stroke-width="4"/>
+  <!-- The hard colour break reads like a second layer of diff rows. -->
+  <g fill="url(#diff)">
+    <path d="M242 302H334V641H442V715H242Z"/>
+    <path transform="translate(9 0)" d="M573 302H758V376H594L557 413V604L594 641H689V552H610V478H781V715H573L465 607V410Z"/>
+  </g>
+</svg>

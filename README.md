@@ -1,13 +1,42 @@
 # layeredgit
 
-A local Git branch review app built with [Rune](https://github.com/anomalyco/rune).
-The diff compares a chosen head to its merge base and layers in any changes
-from the worktree where that head is checked out.
+Run `layeredgit` in a Git repo to review your branch the way you would read a
+GitHub pull request, without pushing. The name is a nod to
+[lazygit](https://github.com/jesseduffield/lazygit).
+
+![layeredgit in dark mode showing committed and uncommitted Rust changes in one diff](docs/screenshot.png)
+
+### Review both layers
+
+**All** interleaves committed and uncommitted edits in one unified diff. Green
+and red tints mark additions and deletions. A blue edge and gutter dot flag
+uncommitted edits, and strikethrough marks lines added in a commit and removed
+in the worktree. **Committed** shows a two-way diff from merge base to HEAD.
+**Uncommitted** shows a two-way diff from HEAD to worktree.
+
+The app watches the filesystem and briefly pulses freshly changed lines. If
+edits are off-screen, click the “N lines changed above/below” chip or press
+`p` / `n` to jump to the nearest one above or below.
+
+### Switch repositories and branches
+
+Use the repositories sidebar, **⌘1–9**, or **⌘[** / **⌘]** to switch repos.
+Search branches in the **Base** and **HEAD** pickers. If you select a head
+checked out in another linked worktree, the diff includes that worktree’s
+uncommitted changes. This is handy when reviewing an agent’s worktree.
+
+- Syntax highlighting and sticky file headers help you scan the diff.
+- Fold files or expand unchanged lines for context.
+- Scroll long lines horizontally or turn on **Wrap**.
+- Press `j` / `k` to move between hunks and `[` / `]` to move between files.
+- Resize the side panels. Light and dark appearance follows macOS.
 
 ## Install on macOS
 
-Run this command from the checkout with rustup, just, Python 3, and Git 2.42 or
-newer installed.
+layeredgit runs on macOS and is built with [Rune](https://github.com/anomalyco/rune).
+To build and install it, use Git 2.42 or newer, just, Python 3, and the Rust
+toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.toml) via rustup.
+Run this from the checkout.
 
 ```sh
 just install
@@ -21,18 +50,16 @@ then `main`, then `master`.
 Run `layeredgit --help` for usage or `man layeredgit` for the manual.
 
 Open **layeredgit** from Finder, Spotlight, or the Dock to restore your
-repositories in one window. Use **+** or **⌘O** to add a working tree, **⌘1–9**
-to jump to a repository, and **⌘[** / **⌘]** to cycle. Right-click a repository
-to remove it from the sidebar without changing anything on disk. Collapse the
-sidebar to make more room for the diff. Closing the window leaves the app in
-the Dock; use **⌘Q** to quit.
+repositories in one window. Use **+** or **⌘O** to add a working tree.
+Right-click a repository to remove it from the sidebar without changing
+anything on disk, or collapse the sidebar to make more room for the diff.
+Closing the window leaves the app in the Dock. Use **⌘Q** to quit.
 
-Use the **Base** and **HEAD** pickers to search branches or enter a tag, commit
-ID, or revision expression. The app remembers each repository’s base. HEAD
-defaults to the checkout on launch; **Reset to current** restores it at any
-time. If you choose a branch checked out in another linked worktree, its
-uncommitted changes appear in the review. A branch without a checkout, a
-remote-tracking ref, a tag, or a commit ID shows committed changes only.
+The **Base** and **HEAD** pickers also accept a tag, commit ID, or revision
+expression. The app remembers each repository’s base. HEAD defaults to the
+checkout on launch. **Reset to current** restores it at any time. A branch
+without a checkout, a remote-tracking ref, a tag, or a commit ID shows committed
+changes only.
 
 On first launch, a fresh installation imports saved repositories, comparison
 bases, sidebar state, panel widths, and window frame from the previous app.
@@ -53,9 +80,7 @@ Run `cargo run -- --repo .` to review the current working tree, `cargo run` for
 the workspace, or `cargo run -- --demo` for the built-in example. Pass
 `--base REF` to override the comparison base.
 
-The review follows filesystem changes and checks Git status periodically. Press
-`r` to refresh immediately. While the fresh-line highlight is active, press `p`
-or `n` to jump to the nearest off-screen edit above or below.
+The review also checks Git status periodically. Press `r` to refresh immediately.
 
 To render the fixture headlessly, run:
 

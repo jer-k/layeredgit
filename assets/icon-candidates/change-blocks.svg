@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>Layeredgit · Change Blocks</title>
+  <defs>
+    <path id="tile" d="M356 100H668C853 100 924 171 924 356V668C924 853 853 924 668 924H356C171 924 100 853 100 668V356C100 171 171 100 356 100Z"/>
+    <linearGradient id="shell" x2=".7" y2="1">
+      <stop stop-color="#FFF9E9"/>
+      <stop offset="1" stop-color="#E0E8E1"/>
+    </linearGradient>
+    <linearGradient id="rim" x2="0" y2="1">
+      <stop stop-color="#FFFFFF" stop-opacity=".9"/>
+      <stop offset="1" stop-color="#AABDB9" stop-opacity=".6"/>
+    </linearGradient>
+    <linearGradient id="green" x2=".55" y2="1">
+      <stop stop-color="#29856F"/>
+      <stop offset="1" stop-color="#155747"/>
+    </linearGradient>
+    <linearGradient id="blue" x2=".55" y2="1">
+      <stop stop-color="#4379E4"/>
+      <stop offset="1" stop-color="#2546A9"/>
+    </linearGradient>
+    <filter id="shadow" x="-.2" y="-.2" width="1.4" height="1.4">
+      <feGaussianBlur stdDeviation="22"/>
+    </filter>
+  </defs>
+  <use href="#tile" transform="translate(0 20)" fill="#152F32" opacity=".36" filter="url(#shadow)"/>
+  <use href="#tile" fill="url(#shell)" stroke="url(#rim)" stroke-width="4"/>
+  <rect x="207" y="257" width="342" height="438" rx="90" fill="#133B33" opacity=".23" filter="url(#shadow)"/>
+  <rect x="207" y="238" width="342" height="438" rx="90" fill="url(#green)"/>
+  <rect x="452" y="348" width="363" height="438" rx="90" fill="#192D59" opacity=".3" filter="url(#shadow)"/>
+  <rect x="452" y="325" width="363" height="438" rx="90" fill="url(#blue)"/>
+  <g fill="#FCFBF4">
+    <path d="M282 306H357V520H446V592H282Z"/>
+    <path d="M631 393C679 393 723 412 750 444L697 491C681 472 657 461 633 461C590 461 564 492 564 540C564 590 593 620 633 620C651 620 666 615 679 606V574H628V514H750V642C720 671 680 688 630 688C545 688 488 627 488 541C488 455 547 393 631 393Z"/>
+  </g>
+</svg>
