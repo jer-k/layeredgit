@@ -14,6 +14,7 @@ pub(crate) const USAGE: &str =
 pub(crate) struct Options {
     /// Absent in demo mode.
     pub(crate) repository: Option<Repository>,
+    pub(crate) demo_pulse: bool,
     /// Rune's flags, in the order the user supplied them.
     pub(crate) tooling: Vec<String>,
 }
@@ -26,6 +27,7 @@ impl Options {
             base: None,
         };
         let mut demo = false;
+        let mut demo_pulse = false;
         let mut tooling = Vec::new();
         while let Some(arg) = args.next() {
             let mut parts = arg.as_bytes().splitn(2, |&byte| byte == b'=');
@@ -45,6 +47,7 @@ impl Options {
                     }
                 }
                 b"--demo" if inline.is_none() => demo = true,
+                b"--demo-pulse" if cfg!(debug_assertions) && inline.is_none() => demo_pulse = true,
                 _ => {
                     tooling.push(arg.into_string().map_err(|arg| {
                         format!("Rune arguments must be UTF-8: {}", arg.display())
@@ -54,6 +57,7 @@ impl Options {
         }
         Ok(Self {
             repository: (!demo).then_some(repository),
+            demo_pulse,
             tooling,
         })
     }

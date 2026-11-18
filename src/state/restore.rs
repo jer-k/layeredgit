@@ -1,58 +1,8 @@
 //! Maps the selection, viewport anchor, and expanded folds across a new alignment.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use crate::model::{FileBody, FileDiff, Filter, Review, ReviewRow, ReviewRows, RowKind};
-
-/// Prefer the latest raw path, then use a shared version path for a rename.
-pub(super) fn match_files(old: &Review, new: &Review) -> Vec<Option<usize>> {
-    let latest: HashMap<_, _> = new
-        .files
-        .iter()
-        .enumerate()
-        .filter_map(|(index, file)| file.paths().next_back().map(|path| (path, index)))
-        .collect();
-    let mut matches: Vec<_> = old
-        .files
-        .iter()
-        .map(|file| {
-            file.paths()
-                .next_back()
-                .and_then(|path| latest.get(path).copied())
-        })
-        .collect();
-    let mut used: HashSet<_> = matches.iter().flatten().copied().collect();
-    let mut aliases = HashMap::new();
-    for (index, file) in new
-        .files
-        .iter()
-        .enumerate()
-        .filter(|(index, _)| !used.contains(index))
-    {
-        for path in file.paths() {
-            aliases
-                .entry(path)
-                .and_modify(|existing| {
-                    if *existing != Some(index) {
-                        *existing = None;
-                    }
-                })
-                .or_insert(Some(index));
-        }
-    }
-    for (matched, file) in matches.iter_mut().zip(&old.files) {
-        if matched.is_none() {
-            *matched = file.paths().rev().find_map(|path| {
-                aliases
-                    .get(path)
-                    .copied()
-                    .flatten()
-                    .filter(|&index| used.insert(index))
-            });
-        }
-    }
-    matches
-}
 
 pub(super) fn folds(
     old: &Review,

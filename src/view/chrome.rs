@@ -1,10 +1,11 @@
 use diff_stack::ThreeWayChange;
-use rune::{ChromeInsets, Cursor, El, TextStyle, col, el, row, text};
+use rune::{ChromeInsets, Color, Cursor, El, MotionIntent, TextStyle, col, el, row, text};
 use rune_kit::{FileNode, Kit, Tree, TreeItem, TreeStyle};
 
 use crate::{
     input::ChangeKind,
     model::Filter,
+    palette::Palette,
     state::{State, Status},
 };
 
@@ -136,39 +137,43 @@ fn filters(current: Filter, kit: &Kit) -> El {
         }))
 }
 
-pub(super) fn legend(state: &State, kit: &Kit) -> El {
+pub(super) fn legend(state: &State, kit: &Kit, palette: Palette, compact: bool) -> El {
     use ThreeWayChange::{
         CommittedAdd, CommittedDelete, CommittedThenRemoved, UncommittedAdd, UncommittedDelete,
     };
 
     let c = &kit.c;
     let marks = |changes: [ThreeWayChange; 2]| {
-        row()
-            .items_center()
-            .gap(3.0)
-            .children(changes.into_iter().map(|change| sample(change, kit)))
+        row().items_center().gap(3.0).children(
+            changes
+                .into_iter()
+                .map(|change| sample(change, kit, palette)),
+        )
     };
+    let item = |mark, label| legend_item(mark, label, kit, compact);
     row()
         .key("legend")
+        .instant_changes()
+        .motion_intent(MotionIntent::STEP | MotionIntent::CUT)
         .h(56.0)
         .items_center()
-        .gap(12.0)
+        .gap(if compact { 6.0 } else { 12.0 })
         .child(
-            text("Unified diff")
+            text(if compact { "Diff" } else { "Unified diff" })
                 .font(kit.ty.body_medium)
                 .color(c.text_base)
                 .single_line(),
         )
         .child(el().grow(1.0))
         .children([
-            (state.filter != Filter::Uncommitted).then(|| legend_item(
-                marks([CommittedAdd, CommittedDelete]), "Committed", kit,
+            (state.filter != Filter::Uncommitted).then(|| item(
+                marks([CommittedAdd, CommittedDelete]), "Committed",
             )),
-            (state.filter != Filter::Committed).then(|| legend_item(
-                marks([UncommittedAdd, UncommittedDelete]), "Uncommitted", kit,
+            (state.filter != Filter::Committed).then(|| item(
+                marks([UncommittedAdd, UncommittedDelete]), "Uncommitted",
             )),
             (state.filter == Filter::All).then(|| {
-                legend_item(sample(CommittedThenRemoved, kit), "Added then removed", kit).help(
+                item(sample(CommittedThenRemoved, kit, palette), "Added then removed").help(
                     "Added at HEAD and removed in the working tree. H indicates a HEAD line number.",
                 )
             }),
@@ -176,8 +181,12 @@ pub(super) fn legend(state: &State, kit: &Kit) -> El {
         .child(wrap_toggle(state.wrap, kit))
 }
 
-fn legend_item(mark: El, label: &'static str, kit: &Kit) -> El {
-    row().items_center().gap(6.0).child(mark).child(
+fn legend_item(mark: El, label: &'static str, kit: &Kit, compact: bool) -> El {
+    let item = row().items_center().gap(6.0).child(mark);
+    if compact {
+        return item.label(label).help(label);
+    }
+    item.child(
         text(label)
             .font(kit.ty.text_xsmall)
             .color(kit.c.text_muted)
@@ -185,12 +194,16 @@ fn legend_item(mark: El, label: &'static str, kit: &Kit) -> El {
     )
 }
 
-fn sample(change: ThreeWayChange, kit: &Kit) -> El {
-    let style = Provenance::new(change, kit);
-    let label = if style.struck { "Aa" } else { style.marker };
+fn sample(change: ThreeWayChange, kit: &Kit, palette: Palette) -> El {
+    let style = Provenance::new(change, kit, palette);
+    let label = if change == ThreeWayChange::CommittedThenRemoved {
+        "Aa"
+    } else {
+        style.marker
+    };
     let mark = text(label).font(kit.ty.mono).color(style.ink);
-    let mark = if style.struck {
-        mark.strike(0, label.len(), None)
+    let mark = if let Some(strike) = style.strike {
+        mark.strike(0, label.len(), Some(strike))
     } else {
         mark
     };
@@ -202,7 +215,7 @@ fn sample(change: ThreeWayChange, kit: &Kit) -> El {
         .radius(kit.radius.sm)
         .fill(style.gutter);
     if style.working {
-        swatch.child(dot(kit, 4.0)).child(mark)
+        swatch.child(dot(palette.dot(), 4.0)).child(mark)
     } else {
         swatch.child(mark)
     }
@@ -244,7 +257,7 @@ fn wrap_toggle(wrap: bool, kit: &Kit) -> El {
         .on_press_tx(State::toggle_wrap)
 }
 
-pub(super) fn sidebar(state: &State, kit: &Kit) -> El {
+pub(super) fn sidebar(state: &State, kit: &Kit, palette: Palette) -> El {
     let c = &kit.c;
     let mut style = TreeStyle::from_kit(kit).gap(7.0).radius(kit.radius.md);
     style.row_height = 32.0;
@@ -252,6 +265,12 @@ pub(super) fn sidebar(state: &State, kit: &Kit) -> El {
     style.padding = 9.0;
     style.selected = accent_surface(kit);
     let row_kit = kit.clone();
+    let fresh: HashSet<_> = state
+        .pulse
+        .files()
+        .filter(|_| state.filter != Filter::Committed)
+        .collect();
+    let opacity = state.pulse.opacity().clone();
     let list = Tree::new(State::sidebar, State::sidebar_mut, FileNode::label)
         .name("Changed files")
         .style(style)
@@ -265,16 +284,21 @@ pub(super) fn sidebar(state: &State, kit: &Kit) -> El {
                 ChangeKind::Renamed => ("R", accent_surface(&row_kit), c.info.fg),
                 _ => ("M", c.layer_01, c.text_muted),
             };
-            let item = if badge.working {
-                item.dot(c.info.icon)
+            // Keep the label and badge in place when a filter hides the dot.
+            let item = item.dot(if badge.working {
+                c.info.icon
             } else {
-                item
-            };
+                Color::TRANSPARENT
+            });
             item.trailing(
                 el().size(22.0, 21.0)
+                    .key("file-badge")
                     .center()
                     .radius(row_kit.radius.sm)
                     .fill(surface)
+                    .children(fresh.contains(&badge.file).then(|| {
+                        super::pulse::wash(&row_kit, palette, &opacity, row_kit.radius.sm)
+                    }))
                     .child(text(glyph).font(row_kit.ty.mono).color(ink)),
             )
         })
@@ -351,3 +375,4 @@ fn shortcuts(kit: &Kit, can_refresh: bool) -> El {
         list
     }
 }
+use std::collections::HashSet;

@@ -12,6 +12,7 @@ fmt-check:
 # Clippy across the workspace, warnings are errors.
 lint:
     cargo clippy --workspace --all-targets -- -D warnings
+    cargo clippy --workspace --all-targets --features dev -- -D warnings
 
 # Run all tests.
 test:

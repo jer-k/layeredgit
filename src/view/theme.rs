@@ -2,37 +2,38 @@ use diff_stack::ThreeWayChange;
 use rune::{Color, El, el};
 use rune_kit::Kit;
 
+use crate::palette::Palette;
+
 pub(super) struct Provenance {
     pub(super) line: Color,
     pub(super) gutter: Color,
     pub(super) ink: Color,
     pub(super) marker: &'static str,
     pub(super) working: bool,
-    pub(super) struck: bool,
+    pub(super) strike: Option<Color>,
 }
 
 impl Provenance {
-    pub(super) fn new(change: ThreeWayChange, kit: &Kit) -> Self {
+    pub(super) fn new(change: ThreeWayChange, kit: &Kit, palette: Palette) -> Self {
         use ThreeWayChange::{
             CommittedAdd, CommittedDelete, CommittedThenRemoved, Context, UncommittedAdd,
             UncommittedDelete,
         };
         let c = &kit.c;
-        let (status, marker, working, struck) = match change {
-            Context => (None, "", false, false),
-            CommittedAdd => (Some(c.success), "+", false, false),
-            CommittedDelete => (Some(c.danger), "−", false, false),
-            UncommittedAdd => (Some(c.success), "+", true, false),
-            UncommittedDelete => (Some(c.danger), "−", true, false),
-            CommittedThenRemoved => (Some(c.success), "+", true, true),
+        let (status, amount, marker, working) = match change {
+            Context => (None, 0.0, "", false),
+            CommittedAdd => (Some(c.success), palette.committed_add, "+", false),
+            CommittedDelete => (Some(c.danger), palette.committed_delete, "−", false),
+            UncommittedAdd => (Some(c.success), palette.uncommitted_add, "+", true),
+            UncommittedDelete => (Some(c.danger), palette.uncommitted_delete, "−", true),
+            CommittedThenRemoved => (Some(c.success), palette.removed_tint, "+", true),
         };
         let (line, gutter, ink) = status.map_or(
             (c.bg_base, tint(c.bg_base, c.layer_01, 0.45), c.text_muted),
             |status| {
-                let line = if kit.dark { 0.20 } else { 0.15 };
                 (
-                    tint(c.bg_base, status.icon, line),
-                    tint(c.bg_base, status.icon, line + 0.06),
+                    tint(c.bg_base, status.icon, amount),
+                    tint(c.bg_base, status.icon, amount * 1.3),
                     status.fg,
                 )
             },
@@ -43,7 +44,8 @@ impl Provenance {
             ink,
             marker,
             working,
-            struck,
+            strike: (change == CommittedThenRemoved && palette.removed_strike > 0.0)
+                .then(|| c.text_muted.alpha(palette.removed_strike)),
         }
     }
 }
@@ -64,8 +66,6 @@ pub(super) fn tint(base: Color, ink: Color, amount: f32) -> Color {
     Color::from_oklab([mix(l, ink_l), mix(a, ink_a), mix(b, ink_b), alpha])
 }
 
-pub(super) fn dot(kit: &Kit, size: f32) -> El {
-    el().size(size, size)
-        .radius(size / 2.0)
-        .fill(kit.c.info.icon)
+pub(super) fn dot(color: Color, size: f32) -> El {
+    el().size(size, size).radius(size / 2.0).fill(color)
 }
