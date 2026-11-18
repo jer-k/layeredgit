@@ -14,20 +14,13 @@ use crate::{
 
 use super::theme::{Provenance, accent_surface, dot};
 
-pub(crate) fn review_mark(kit: &Kit, size: f32) -> El {
-    el().size(size, size)
-        .center()
-        .radius(kit.radius.lg)
-        .fill(accent_surface(kit))
-        .child(
-            text("±")
-                .font(TextStyle {
-                    size: size * 0.625,
-                    weight: 600.0,
-                    ..kit.ty.mono
-                })
-                .color(kit.c.info.fg),
-        )
+pub(crate) fn review_mark(state: &State, size: f32) -> El {
+    let mark = el().key("review-mark").size(size, size).a11y_hidden();
+    if let Some(image) = &state.review_mark {
+        mark.pixels(image.pixels())
+    } else {
+        mark
+    }
 }
 
 pub(super) fn toolbar(state: &State, kit: &Kit, insets: ChromeInsets, layer: &mut Vec<El>) -> El {
@@ -42,7 +35,7 @@ pub(super) fn toolbar(state: &State, kit: &Kit, insets: ChromeInsets, layer: &mu
         .shrink()
         .min_w(0.0)
         .gap(10.0)
-        .child(review_mark(kit, 32.0))
+        .child(review_mark(state, 32.0))
         .child(
             text(name)
                 .key("workspace-title")

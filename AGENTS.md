@@ -44,7 +44,10 @@ Scripts are timestamped JSON events (`tap`/`move`/`scroll`/`key`/`type`, at `x,y
 (content sits under a transparent titlebar), never something to ignore.
 
 Give interactive elements stable `.key(..)`s so
-scripts and `--tree` can target them. Keep generated images under `target/`, never commit them.
+scripts and `--tree` can target them. Keep generated images under `target/`.
+Commit only the README screenshot at `docs/screenshot.png`, the app icon at
+`assets/icon.svg`, `assets/icon.png`, and `assets/icon.icns`, and the SVG sources
+under `assets/icon-candidates/`.
 
 ## Rules
 

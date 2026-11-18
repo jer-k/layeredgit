@@ -14,7 +14,7 @@ mod tests;
 
 use std::{cell::Cell, collections::HashSet, ops::Range, rc::Rc, sync::Arc};
 
-use rune::{Key, KeyEvent, Tx, Waker};
+use rune::{Image, Key, KeyEvent, Tx, Waker};
 
 use crate::{
     model::{Filter, Review, ReviewRows, RowKind, fresh::Replacement},
@@ -35,6 +35,8 @@ pub(crate) enum Status {
 }
 
 pub(crate) struct State {
+    /// The embedded app icon used in the toolbar and empty workspace.
+    pub(crate) review_mark: Option<Image>,
     pub(crate) workspace: Option<Workspace>,
     pub(crate) panels: panels::Panels,
     pub(crate) review: Arc<Review>,
@@ -100,6 +102,7 @@ impl State {
             sidebar.select(file);
         }
         Self {
+            review_mark: None,
             workspace: None,
             panels: panels::Panels::default(),
             review: Arc::new(review),
