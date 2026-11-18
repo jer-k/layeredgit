@@ -1,13 +1,15 @@
 use std::{borrow::Cow, ops::Range, rc::Rc};
 
+use diff_stack::ThreeWayChange;
+
 use rune::{
-    Color, Cursor, El, GrowthSpec, ScrollSpec, Shadow, TextStyle, col, el, icon, rich, row, text,
+    Align, Color, Cursor, El, GrowthSpec, ScrollSpec, Shadow, TextStyle, col, el, icon, memo, rich,
+    row, text,
 };
 use rune_kit::{Kit, syntax::SyntaxTheme};
 
 use crate::{
-    input::ChangeKind,
-    model::{Counts, FileBody, FileDiff, Line, RowKind},
+    model::{Counts, FileBody, FileDiff, Filter, Line, RowKind},
     state::{HEADER_HEIGHT, State},
 };
 
@@ -18,9 +20,19 @@ const NUMBER_WIDTH: f32 = 57.0;
 const EDGE_WIDTH: f32 = 3.0;
 const MARKER_WIDTH: f32 = 35.0;
 const CODE_INSET: f32 = EDGE_WIDTH + NUMBER_WIDTH * 2.0 + MARKER_WIDTH;
+const CODE_SIZE: f32 = 13.0;
+const CODE_PADDING: f32 = 19.0;
 
-pub(super) fn pane(state: &State, kit: &Kit) -> El {
-    let look = Rc::new(DiffLook::new(kit));
+pub(super) fn pane(state: &State, kit: &Kit, viewport_width: f32) -> El {
+    // Keep the width stable while the virtual window moves through shorter rows.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "Convert code columns to layout points"
+    )]
+    let content_width =
+        CODE_INSET + CODE_PADDING + state.rows.widest_line as f32 * (0.6 * CODE_SIZE);
+    let horizontal = !state.wrap && viewport_width > 0.0 && content_width > viewport_width;
+    let look = Rc::new(DiffLook::new(kit, horizontal.then_some(viewport_width)));
     let render = Rc::clone(&look);
     let list = col()
         .key("diff-rows")
@@ -42,21 +54,31 @@ pub(super) fn pane(state: &State, kit: &Kit) -> El {
         )
         .virtual_rows_version(state.rows_version)
         .on_visible_rows(State::show_rows);
+    let list = if horizontal {
+        list.min_w(content_width)
+    } else {
+        list
+    };
     let scroll = col()
         .key("diff-scroll")
         .grow(1.0)
         .min_h(0.0)
         .scroll(ScrollSpec {
             stick_bottom: false,
-        })
-        .child(list);
+        });
+    let scroll = if horizontal {
+        scroll.scroll_xy()
+    } else {
+        scroll
+    };
+    let scroll = scroll.child(list);
     let mut pane = col().key("diff").grow(1.0).min_h(0.0).child(scroll);
     // A file header can be far outside the virtual window while its file is still in view.
     if let Some(index) = state.sticky_file
         && let Some(file) = state.review.files.get(index)
     {
         pane = pane.child(
-            file_header(index, file, false, true, kit)
+            file_header(index, file, state.filter, false, true, kit)
                 .key(format!("sticky-header/{index}"))
                 .absolute(0.0, 0.0)
                 .w_full(),
@@ -70,18 +92,20 @@ struct DiffLook {
     syntax: SyntaxTheme,
     code: TextStyle,
     folding: Color,
+    horizontal: Option<f32>,
 }
 
 impl DiffLook {
-    fn new(kit: &Kit) -> Self {
+    fn new(kit: &Kit, horizontal: Option<f32>) -> Self {
         Self {
             kit: kit.clone(),
             syntax: SyntaxTheme::from_kit(kit),
             code: TextStyle {
-                size: 13.0,
+                size: CODE_SIZE,
                 line_height: LINE_HEIGHT,
                 ..kit.ty.mono
             },
+            horizontal,
             folding: tint(
                 kit.c.bg_base,
                 kit.c.info.icon,
@@ -98,112 +122,167 @@ impl DiffLook {
             return el();
         };
         let collapsed = state.collapsed.contains(&entry.file);
+        let filter = state.filter;
+        let horizontal = self.horizontal.map(f32::to_bits);
+        let version = (
+            state.review_version,
+            filter,
+            state.wrap,
+            self.kit.dark,
+            collapsed,
+        );
         match &entry.kind {
-            RowKind::Header => file_header(entry.file, file, collapsed, false, &self.kit),
-            RowKind::Hunk { label, .. } => self.hunk(label),
-            RowKind::Line(number) => {
-                if let FileBody::Text(diff) = &file.body
+            RowKind::Line(number) => memo(&entry.key, (version, horizontal.is_some()), || {
+                if let FileBody::Text(diff) = file.body(filter)
                     && let Some(line) = diff.lines.get(*number)
+                    && let Some(change) = filter.change(line)
                 {
-                    self.code_line(line, state.filter.appearance(line.change))
+                    self.code_line(line, change, filter, state.wrap)
                 } else {
                     el().h(LINE_HEIGHT)
                 }
-            }
-            RowKind::Fold(range) => self.fold(entry.file, range.clone()),
-            RowKind::Newline(version) => self.newline(version),
-            RowKind::Placeholder(message) => self.placeholder(message),
-            RowKind::Space => self.space(collapsed),
+            }),
+            kind => memo(&entry.key, (version, horizontal), || {
+                let row = match kind {
+                    RowKind::Header => {
+                        file_header(entry.file, file, filter, collapsed, false, &self.kit)
+                    }
+                    RowKind::Hunk { label, .. } => self.hunk(label, filter),
+                    RowKind::Fold { range, count } => self.fold(entry.file, range.clone(), *count),
+                    RowKind::Newline(version) => self.newline(version),
+                    RowKind::Placeholder(message) => self.placeholder(message),
+                    RowKind::Space => self.space(collapsed),
+                    RowKind::Line(_) => el().h(LINE_HEIGHT),
+                };
+                if let Some(width) = self.horizontal {
+                    row.w(width).sticky_left(0.0)
+                } else {
+                    row
+                }
+            }),
         }
     }
 
-    fn code_line(&self, line: &Line, change: diff_stack::ThreeWayChange) -> El {
+    fn code_line(&self, line: &Line, change: ThreeWayChange, filter: Filter, wrap: bool) -> El {
         let c = &self.kit.c;
         let p = Provenance::new(change, &self.kit);
-        let head_only = line.base.is_none() && line.worktree.is_none();
-        let worktree = if head_only {
+        let (old, new) = filter.columns();
+        let head_only = change == ThreeWayChange::CommittedThenRemoved;
+        let new_number = if head_only {
             line.head.map_or_else(String::new, |n| format!("H{n}"))
         } else {
-            line.worktree.map_or_else(String::new, |n| n.to_string())
+            line.number(new).map_or_else(String::new, |n| n.to_string())
         };
-        let code = rich(&line.text, self.syntax.spans(&line.highlights, 0))
-            .font(self.code)
-            .color(c.text_base)
-            .grow(1.0)
-            .min_w(0.0)
-            .single_line()
-            .truncate_fade()
-            .help_when_truncated(&line.text);
+        let highlights = line.highlights(filter);
+        let code = if highlights.is_empty() {
+            text(&line.text)
+        } else {
+            rich(&line.text, self.syntax.spans(highlights, 0))
+        };
+        let code = code.font(self.code).color(c.text_base).w_full();
+        let code = if wrap {
+            code.wrap_anywhere()
+        } else {
+            code.single_line()
+        };
         let code = if p.struck {
             code.strike(0, line.text.len(), None)
         } else {
             code
         };
-        let gutter = row()
-            .h_full()
-            .items_center()
+        let mut gutter = row()
+            .key("gutter")
+            .items_stretch()
             .fill(p.gutter)
             .child(
                 el().w(EDGE_WIDTH)
-                    .h_full()
                     .fill(if p.working { c.info.icon } else { p.gutter }),
             )
             .child(self.number(
-                line.base.map_or_else(String::new, |n| n.to_string()),
+                line.number(old).map_or_else(String::new, |n| n.to_string()),
                 &p,
                 false,
             ))
-            .child(self.number(worktree, &p, head_only))
-            .child(
+            .child(self.number(new_number, &p, head_only));
+        let marker = row().w(MARKER_WIDTH);
+        let marker = if p.marker.is_empty() {
+            marker
+        } else {
+            marker.child(
                 row()
-                    .w(MARKER_WIDTH)
-                    .h_full()
-                    .items_center()
+                    .h(LINE_HEIGHT)
                     .gap(5.0)
                     .pl(3.0)
+                    .items_center()
                     .child(if p.working {
                         dot(&self.kit, 5.0)
                     } else {
                         el().w(5.0)
                     })
                     .child(text(p.marker).font(self.code).color(p.ink)),
-            );
-        self.card_row()
-            .h(LINE_HEIGHT)
-            .items_center()
+            )
+        };
+        gutter = gutter.child(marker);
+        if self.horizontal.is_some() {
+            gutter = gutter.sticky_left(0.0);
+        }
+        let line_row = self
+            .card_row()
+            .min_h(LINE_HEIGHT)
+            .items_stretch()
             .fill(p.line)
             .child(gutter)
-            .child(code.pl(9.0).pr(10.0))
+            .child(
+                col()
+                    .grow(1.0)
+                    .min_w(0.0)
+                    .pl(9.0)
+                    .pr(10.0)
+                    .child(code.key("code")),
+            );
+        if wrap {
+            line_row
+        } else {
+            line_row.h(LINE_HEIGHT)
+        }
     }
 
     fn number(&self, number: String, p: &Provenance, head_only: bool) -> El {
         let c = &self.kit.c;
-        let mut digit =
-            text(number)
-                .font(self.code)
-                .color(if head_only { c.info.fg } else { p.ink });
+        let border = [0.0, 1.0, 0.0, 0.0];
         if head_only {
-            digit = digit
-                .font(TextStyle {
-                    size: 11.0,
-                    ..self.code
-                })
-                .px(5.0)
-                .radius(3.0)
-                .fill(accent_surface(&self.kit))
-                .help("Line number at HEAD");
+            row()
+                .w(NUMBER_WIDTH)
+                .pr(8.0)
+                .items_start()
+                .justify_end()
+                .border_sides(border, c.border_muted)
+                .child(
+                    text(number)
+                        .font(TextStyle {
+                            size: 11.0,
+                            ..self.code
+                        })
+                        .color(c.info.fg)
+                        .px(5.0)
+                        .radius(3.0)
+                        .fill(accent_surface(&self.kit))
+                        .help("Line number at HEAD"),
+                )
+        } else if number.is_empty() {
+            el().w(NUMBER_WIDTH).border_sides(border, c.border_muted)
+        } else {
+            text(number)
+                .w(NUMBER_WIDTH)
+                .pr(8.0)
+                .font(self.code)
+                .color(p.ink)
+                .align(Align::End)
+                .border_sides(border, c.border_muted)
         }
-        row()
-            .w(NUMBER_WIDTH)
-            .h_full()
-            .pr(8.0)
-            .items_center()
-            .justify_end()
-            .border_sides([0.0, 1.0, 0.0, 0.0], c.border_muted)
-            .child(digit)
     }
 
-    fn hunk(&self, label: &str) -> El {
+    fn hunk(&self, label: &str, filter: Filter) -> El {
         let c = &self.kit.c;
         let note = |name| {
             row()
@@ -217,20 +296,20 @@ impl DiffLook {
                         .color(c.text_muted),
                 )
         };
+        let (old, new) = filter.column_labels();
         self.card_row()
             .h(28.0)
             .items_center()
             .fill(self.folding)
             .child(el().w(EDGE_WIDTH))
-            .child(note("Base"))
-            .child(note("Worktree"))
+            .child(note(old))
+            .child(note(new))
             .child(el().w(MARKER_WIDTH + 9.0))
             .child(text(label).font(self.kit.ty.mono).color(c.info.fg))
     }
 
-    fn fold(&self, file: usize, range: Range<usize>) -> El {
+    fn fold(&self, file: usize, range: Range<usize>, hidden: usize) -> El {
         let kit = &self.kit;
-        let hidden = range.len();
         let label = if hidden == 1 {
             "Expand 1 line".into()
         } else {
@@ -310,9 +389,16 @@ impl DiffLook {
     }
 }
 
-fn file_header(index: usize, file: &FileDiff, collapsed: bool, sticky: bool, kit: &Kit) -> El {
+fn file_header(
+    index: usize,
+    file: &FileDiff,
+    filter: Filter,
+    collapsed: bool,
+    sticky: bool,
+    kit: &Kit,
+) -> El {
     let c = &kit.c;
-    let path = file.path_label();
+    let path = file.path_label(filter);
     let chevron = if collapsed {
         kit.glyph.caret_right
     } else {
@@ -359,22 +445,20 @@ fn file_header(index: usize, file: &FileDiff, collapsed: bool, sticky: bool, kit
                 .truncate_middle()
                 .help_when_truncated(path),
         )
-        .child(counts(
-            "Committed",
-            file.committed,
-            &file.committed_counts,
-            false,
-            kit,
-        ))
-        .child(el().size(1.0, 15.0).fill(c.border_muted))
-        .child(counts(
-            "Uncommitted",
-            file.uncommitted,
-            &file.uncommitted_counts,
-            true,
-            kit,
-        ))
         .on_press_tx(move |state: &mut State, tx| state.toggle_file(index, tx));
+    let mut header = header;
+    let mut has_summary = false;
+    for layer in [Filter::Committed, Filter::Uncommitted] {
+        if (filter == Filter::All || filter == layer)
+            && let Some((counts, label)) = file.summary(layer)
+        {
+            if has_summary {
+                header = header.child(el().size(1.0, 15.0).fill(c.border_muted));
+            }
+            header = header.child(layer_summary(layer, counts, label.as_deref(), kit));
+            has_summary = true;
+        }
+    }
     if sticky {
         header.box_shadow(Shadow {
             y: 2.0,
@@ -387,49 +471,33 @@ fn file_header(index: usize, file: &FileDiff, collapsed: bool, sticky: bool, kit
     }
 }
 
-fn counts(
-    label: &'static str,
-    change: ChangeKind,
-    counts: &Counts,
-    working: bool,
-    kit: &Kit,
-) -> El {
+fn layer_summary(layer: Filter, counts: &Counts, label: Option<&str>, kit: &Kit) -> El {
     let c = &kit.c;
-    let stat = |value, mark, ink| {
-        text(format!("{mark}{value}"))
-            .font(kit.ty.mono)
-            .color(if value == 0 { c.text_muted } else { ink })
-    };
-    let summary = row()
-        .items_center()
-        .gap(6.0)
-        .child(if working && change != ChangeKind::Unchanged {
-            dot(kit, 4.0)
-        } else {
-            el()
-        })
-        .child(
+    let mut summary = row().items_center().gap(6.0);
+    if layer == Filter::Uncommitted {
+        summary = summary.child(dot(kit, 4.0));
+    }
+    summary = summary.child(
+        text(layer.label())
+            .font(kit.ty.text_xsmall)
+            .color(c.text_muted)
+            .single_line(),
+    );
+    if let Some(label) = label {
+        return summary.child(
             text(label)
-                .font(kit.ty.text_xsmall)
-                .color(c.text_muted)
+                .font(kit.ty.text_xsmall_medium)
+                .color(c.text_base)
                 .single_line(),
         );
-    let change_label = match change {
-        ChangeKind::Unchanged => "",
-        ChangeKind::Modified => "Modified",
-        ChangeKind::Added => "Added",
-        ChangeKind::Deleted => "Deleted",
-        ChangeKind::Renamed => "Renamed",
-    };
-    if counts.added == 0 && counts.removed == 0 && change != ChangeKind::Unchanged {
-        summary.child(
-            text(change_label)
-                .font(kit.ty.text_xsmall_medium)
-                .color(c.text_base),
-        )
-    } else {
-        summary
-            .child(stat(counts.added, "+", c.success.fg))
-            .child(stat(counts.removed, "−", c.danger.fg))
     }
+    for (value, mark, ink) in [
+        (counts.added, "+", c.success.fg),
+        (counts.removed, "−", c.danger.fg),
+    ] {
+        if value > 0 {
+            summary = summary.child(text(format!("{mark}{value}")).font(kit.ty.mono).color(ink));
+        }
+    }
+    summary
 }

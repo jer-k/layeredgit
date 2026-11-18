@@ -1,6 +1,6 @@
 {
   "events": [
-    {"t": 0.10, "type": "tap", "key": "file/3"},
+    {"t": 0.10, "type": "tap", "key": "file/docs/CHANGELOG.md"},
     {"t": 0.45, "type": "key", "name": "]"},
     {"t": 0.75, "type": "key", "name": "["},
     {"t": 1.05, "type": "key", "name": "j"},

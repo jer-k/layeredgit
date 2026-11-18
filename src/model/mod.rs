@@ -1,10 +1,12 @@
 //! Alignment, syntax mapping, and the review data that the view reads.
 
 mod highlighting;
+mod projection;
 mod rows;
 
 use std::{
     borrow::Cow,
+    cmp::Ordering,
     ops::Range,
     path::{Path, PathBuf},
 };
@@ -14,6 +16,9 @@ use rune_kit::syntax::Highlight;
 
 use crate::input::{ChangeKind, FileVersion, InputFile, Placeholder, ReviewInput};
 
+pub(crate) use projection::Filter;
+use projection::Projection;
+
 pub(crate) use rows::{ReviewRow, ReviewRows, RowKind};
 
 const BASE: usize = 0;
@@ -21,69 +26,66 @@ const HEAD: usize = 1;
 const WORKTREE: usize = 2;
 const CONTEXT_LINES: usize = 3;
 
-/// Which transition contributes changes to the review.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum Filter {
-    #[default]
-    All,
-    Committed,
-    Uncommitted,
-}
-
-impl Filter {
-    pub(crate) const ALL: [Self; 3] = [Self::All, Self::Committed, Self::Uncommitted];
-
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            Self::All => "All",
-            Self::Committed => "Committed",
-            Self::Uncommitted => "Uncommitted",
-        }
-    }
-
-    fn transitions(self) -> Option<Range<usize>> {
-        match self {
-            Self::All => None,
-            Self::Committed => Some(HEAD..WORKTREE),
-            Self::Uncommitted => Some(WORKTREE..WORKTREE + 1),
-        }
-    }
-
-    fn includes(self, destination: usize) -> bool {
-        self.transitions()
-            .is_none_or(|versions| versions.contains(&destination))
-    }
-
-    /// Makes changes from an unselected layer read like ordinary context.
-    pub(crate) fn appearance(self, change: ThreeWayChange) -> ThreeWayChange {
-        use ThreeWayChange::{
-            CommittedAdd, CommittedDelete, Context, UncommittedAdd, UncommittedDelete,
-        };
-        match change {
-            CommittedAdd | CommittedDelete if !self.includes(HEAD) => Context,
-            UncommittedAdd | UncommittedDelete if !self.includes(WORKTREE) => Context,
-            _ => change,
-        }
-    }
-}
-
 /// An owned alignment and syntax cache for a branch review.
 #[derive(Default)]
 pub(crate) struct Review {
     pub(crate) base_label: String,
     pub(crate) head_label: String,
     pub(crate) files: Vec<FileDiff>,
+    order: [Vec<usize>; 3],
 }
 
 impl Review {
     /// Aligns each file and prepares all syntax and hunk data before the view runs.
     pub(crate) fn new(input: ReviewInput) -> Self {
+        let files: Vec<_> = input.files.into_iter().map(FileDiff::new).collect();
+        let order = Filter::ALL.map(|filter| {
+            let mut order: Vec<_> = files
+                .iter()
+                .enumerate()
+                .filter(|(_, file)| file.has_changes(filter))
+                .collect();
+            order.sort_by(|(_, left), (_, right)| {
+                tree_order(left.display_path(filter), right.display_path(filter))
+            });
+            order.into_iter().map(|(index, _)| index).collect()
+        });
         Self {
             base_label: input.base_label,
             head_label: input.head_label,
-            files: input.files.into_iter().map(FileDiff::new).collect(),
+            files,
+            order,
         }
     }
+
+    pub(crate) fn file_order(&self, filter: Filter) -> &[usize] {
+        match filter {
+            Filter::All => &self.order[0],
+            Filter::Committed => &self.order[1],
+            Filter::Uncommitted => &self.order[2],
+        }
+    }
+}
+
+fn tree_order(left: &Path, right: &Path) -> Ordering {
+    let mut left = left.components().peekable();
+    let mut right = right.components().peekable();
+    while let (Some(a), Some(b)) = (left.next(), right.next()) {
+        let a = a.as_os_str();
+        let b = b.as_os_str();
+        let order = right
+            .peek()
+            .is_some()
+            .cmp(&left.peek().is_some())
+            .then_with(|| {
+                rune_kit::natural_cmp(&a.to_string_lossy(), &b.to_string_lossy())
+                    .then_with(|| a.cmp(b))
+            });
+        if order != Ordering::Equal {
+            return order;
+        }
+    }
+    Ordering::Equal
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -98,23 +100,26 @@ pub(crate) struct FileDiff {
     pub(crate) uncommitted: ChangeKind,
     pub(crate) committed_counts: Counts,
     pub(crate) uncommitted_counts: Counts,
-    pub(crate) body: FileBody,
+    text: Result<TextDiff, Placeholder>,
+    placeholders: [Option<Placeholder>; 2],
 }
 
-pub(crate) enum FileBody {
-    Text(TextDiff),
+pub(crate) enum FileBody<'a> {
+    Text(&'a TextDiff),
     Placeholder(Placeholder),
 }
 
 pub(crate) struct TextDiff {
     pub(crate) lines: Vec<Line>,
-    hunks: [Vec<Range<usize>>; 3],
+    projections: [Projection; 3],
     newlines: Vec<Newline>,
 }
 
 pub(crate) struct Line {
     pub(crate) text: String,
-    pub(crate) highlights: Box<[Highlight]>,
+    columns: usize,
+    highlights: Box<[Highlight]>,
+    head_highlights: Option<Box<[Highlight]>>,
     pub(crate) base: Option<u32>,
     pub(crate) head: Option<u32>,
     pub(crate) worktree: Option<u32>,
@@ -131,33 +136,40 @@ struct Newline {
 impl FileDiff {
     fn new(input: InputFile) -> Self {
         let versions = [input.base, input.head, input.worktree];
-        let body = if let Some(reason) = input.placeholder {
-            FileBody::Placeholder(reason)
-        } else {
-            TextDiff::new(&versions).map_or(
-                FileBody::Placeholder(Placeholder::TooManyLines),
-                FileBody::Text,
-            )
+        let text = match input.placeholders {
+            [Some(before), Some(after)] => Err(before.max(after)),
+            _ => TextDiff::new(&versions).map_err(|_| Placeholder::TooManyLines),
         };
-        let (committed_counts, uncommitted_counts) = match &body {
-            FileBody::Text(diff) => counts(&diff.lines),
-            FileBody::Placeholder(_) => (Counts::default(), Counts::default()),
-        };
+        let (committed_counts, uncommitted_counts) = text.as_ref().map_or_else(
+            |_| (Counts::default(), Counts::default()),
+            |diff| counts(&diff.lines),
+        );
         Self {
             paths: versions.map(|version| version.map(|v| v.path)),
             committed: input.committed,
             uncommitted: input.uncommitted,
             committed_counts,
             uncommitted_counts,
-            body,
+            text,
+            placeholders: input.placeholders,
         }
     }
 
-    /// The most recent path, including the former path for a deleted file.
-    pub(crate) fn path(&self) -> Cow<'_, str> {
-        self.paths()
+    /// The latest path in the selected comparison, including the path of a deletion.
+    pub(crate) fn display_path(&self, filter: Filter) -> &Path {
+        let (start, end) = filter.columns();
+        self.paths
+            .get(start..=end)
+            .into_iter()
+            .flatten()
+            .filter_map(Option::as_deref)
             .next_back()
-            .map_or(Cow::Borrowed(""), Path::to_string_lossy)
+            .unwrap_or_else(|| Path::new(""))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn path(&self) -> Cow<'_, str> {
+        self.display_path(Filter::All).to_string_lossy()
     }
 
     /// Paths in version order, for matching files across refreshes.
@@ -167,9 +179,8 @@ impl FileDiff {
 
     /// Finds the old display line in this file, with its index as a fallback.
     pub(crate) fn relocated_line(&self, old: &Self, index: usize) -> Option<usize> {
-        let (FileBody::Text(before), FileBody::Text(after)) = (&old.body, &self.body) else {
-            return None;
-        };
+        let before = old.text.as_ref().ok()?;
+        let after = self.text.as_ref().ok()?;
         let anchor = before.lines.get(index)?;
         let rank = |(i, line): (usize, &Line)| {
             (
@@ -196,9 +207,16 @@ impl FileDiff {
     }
 
     /// The distinct paths in version order, keeping a rename that was reversed.
-    pub(crate) fn path_label(&self) -> String {
+    pub(crate) fn path_label(&self, filter: Filter) -> String {
         let mut paths = Vec::with_capacity(self.paths.len());
-        for path in self.paths() {
+        let (start, end) = filter.columns();
+        for path in self
+            .paths
+            .get(start..=end)
+            .into_iter()
+            .flatten()
+            .filter_map(Option::as_deref)
+        {
             if paths.last().copied() != Some(path) {
                 paths.push(path);
             }
@@ -210,7 +228,70 @@ impl FileDiff {
             .join(" → ")
     }
 
-    fn has_changes(&self, filter: Filter) -> bool {
+    pub(crate) fn body(&self, filter: Filter) -> FileBody<'_> {
+        let [committed, uncommitted] = self.placeholders;
+        let placeholder = match filter {
+            Filter::All => committed.max(uncommitted),
+            Filter::Committed => committed,
+            Filter::Uncommitted => uncommitted,
+        };
+        match (placeholder, &self.text) {
+            (Some(reason), _) => FileBody::Placeholder(reason),
+            (None, Err(reason)) => FileBody::Placeholder(*reason),
+            (None, Ok(diff)) => FileBody::Text(diff),
+        }
+    }
+
+    /// The active change badge and whether working-tree provenance is visible.
+    pub(crate) fn badge(&self, filter: Filter) -> (ChangeKind, bool) {
+        let working = filter.includes(WORKTREE) && self.uncommitted != ChangeKind::Unchanged;
+        (
+            if working {
+                self.uncommitted
+            } else {
+                self.committed
+            },
+            working,
+        )
+    }
+
+    /// The kind, counts, and optional label for a layer that changed.
+    pub(crate) fn summary(&self, filter: Filter) -> Option<(&Counts, Option<Cow<'static, str>>)> {
+        let (kind, counts) = match filter {
+            Filter::Committed => (self.committed, &self.committed_counts),
+            Filter::Uncommitted => (self.uncommitted, &self.uncommitted_counts),
+            Filter::All => return None,
+        };
+        if kind == ChangeKind::Unchanged {
+            return None;
+        }
+        let label = match self.body(filter) {
+            FileBody::Placeholder(Placeholder::Binary) => Some("Binary".into()),
+            FileBody::Placeholder(reason) => Some(reason.message()),
+            FileBody::Text(diff) if *counts == Counts::default() => Some(
+                if diff
+                    .newlines
+                    .iter()
+                    .any(|marker| filter.includes(marker.destination))
+                {
+                    "Newline at end of file"
+                } else {
+                    match kind {
+                        ChangeKind::ModeChanged => "Mode change",
+                        ChangeKind::Renamed => "Renamed",
+                        ChangeKind::Added => "Added",
+                        ChangeKind::Deleted => "Deleted",
+                        _ => "Modified",
+                    }
+                }
+                .into(),
+            ),
+            FileBody::Text(_) => None,
+        };
+        Some((counts, label))
+    }
+
+    pub(super) fn has_changes(&self, filter: Filter) -> bool {
         (filter.includes(HEAD) && self.committed != ChangeKind::Unchanged)
             || (filter.includes(WORKTREE) && self.uncommitted != ChangeKind::Unchanged)
     }
@@ -225,18 +306,23 @@ impl TextDiff {
         let ink = versions
             .each_ref()
             .map(|version| version.as_ref().map(highlighting::VersionInk::new));
-        let lines = stack
+        let lines: Vec<_> = stack
             .lines()
             .iter()
             .enumerate()
             .filter_map(|(index, shown)| {
                 let change = stack.classify_three_way(index)?;
                 let source = shown.dies().map_or(WORKTREE, |death| death - 1);
-                let highlights = ink
-                    .get(source)
-                    .and_then(Option::as_ref)
-                    .map_or_else(Vec::new, |ink| ink.line(shown.line_number(source)));
-                Some(Line::new(shown, change, highlights))
+                let syntax = |version| {
+                    let number = shown.line_number(version)?;
+                    ink.get(version)?.as_ref().map(|ink| ink.line(Some(number)))
+                };
+                let highlights = syntax(source).unwrap_or_default();
+                let head_highlights = (source == WORKTREE)
+                    .then(|| syntax(HEAD))
+                    .flatten()
+                    .filter(|head| head != &highlights);
+                Some(Line::new(shown, change, highlights, head_highlights))
             })
             .collect();
         let mut newlines: Vec<_> = [HEAD, WORKTREE]
@@ -244,19 +330,34 @@ impl TextDiff {
             .filter_map(|destination| newline(&stack, &texts, destination))
             .collect();
         newlines.sort_by_key(|marker| (marker.line, marker.version));
+        let projections = Filter::ALL.map(|filter| {
+            if filter == Filter::All {
+                Projection::all(hunks_with_newlines(&stack, &newlines))
+            } else {
+                Projection::pair(&lines, &newlines, filter)
+            }
+        });
         Ok(Self {
             lines,
-            hunks: Filter::ALL.map(|filter| hunks_with_newlines(&stack, filter, &newlines)),
+            projections,
             newlines,
         })
     }
 
-    fn hunks(&self, filter: Filter) -> &[Range<usize>] {
+    fn projection(&self, filter: Filter) -> &Projection {
         match filter {
-            Filter::All => &self.hunks[0],
-            Filter::Committed => &self.hunks[1],
-            Filter::Uncommitted => &self.hunks[2],
+            Filter::All => &self.projections[0],
+            Filter::Committed => &self.projections[1],
+            Filter::Uncommitted => &self.projections[2],
         }
+    }
+
+    fn hunks(&self, filter: Filter) -> &[Range<usize>] {
+        &self.projection(filter).hunks
+    }
+
+    pub(crate) fn visible_count(&self, filter: Filter, range: Range<usize>) -> usize {
+        self.projection(filter).count(range)
     }
 
     /// Unchanged ranges which can be expanded in this filter.
@@ -270,16 +371,51 @@ impl TextDiff {
         starts
             .zip(ends)
             .map(|(start, end)| start..end)
-            .filter(move |gap| !hunks.is_empty() && !gap.is_empty())
+            .filter(move |gap| !hunks.is_empty() && self.visible_count(filter, gap.clone()) > 0)
     }
 }
 
 impl Line {
-    fn new(line: &DisplayLine<'_>, change: ThreeWayChange, highlights: Vec<Highlight>) -> Self {
+    pub(crate) fn highlights(&self, filter: Filter) -> &[Highlight] {
+        if filter == Filter::Committed
+            && let Some(head) = &self.head_highlights
+        {
+            return head;
+        }
+        &self.highlights
+    }
+
+    pub(crate) fn number(&self, version: usize) -> Option<u32> {
+        match version {
+            BASE => self.base,
+            HEAD => self.head,
+            WORKTREE => self.worktree,
+            _ => None,
+        }
+    }
+
+    fn new(
+        line: &DisplayLine<'_>,
+        change: ThreeWayChange,
+        highlights: Vec<Highlight>,
+        head_highlights: Option<Vec<Highlight>>,
+    ) -> Self {
         let (text, highlights) = highlighting::expand_tabs(line.text(), highlights);
+        let head_highlights = head_highlights.map(|highlights| {
+            highlighting::expand_tabs(line.text(), highlights)
+                .1
+                .into_boxed_slice()
+        });
+        // Allow two cells for wide glyphs when estimating the unwrapped extent.
+        let columns = text
+            .chars()
+            .map(|ch| if ch.len_utf8() >= 3 { 2 } else { 1 })
+            .sum();
         Self {
             text,
+            columns,
             highlights: highlights.into_boxed_slice(),
+            head_highlights,
             base: line.line_number(BASE),
             head: line.line_number(HEAD),
             worktree: line.line_number(WORKTREE),
@@ -314,17 +450,10 @@ fn newline(stack: &Stack<'_>, texts: &[Option<&str>; 3], destination: usize) -> 
     })
 }
 
-fn hunks_with_newlines(
-    stack: &Stack<'_>,
-    filter: Filter,
-    markers: &[Newline],
-) -> Vec<Range<usize>> {
-    let mut hunks = stack.hunks(CONTEXT_LINES, filter.transitions());
+fn hunks_with_newlines(stack: &Stack<'_>, markers: &[Newline]) -> Vec<Range<usize>> {
+    let mut hunks = stack.hunks(CONTEXT_LINES, None);
     let original_count = hunks.len();
-    for marker in markers
-        .iter()
-        .filter(|marker| filter.includes(marker.destination))
-    {
+    for marker in markers {
         // A change in the other layer can separate the unterminated line from the
         // newer version's last line, the anchor used by Stack::hunks.
         if !hunks.iter().any(|hunk| hunk.contains(&marker.line)) {

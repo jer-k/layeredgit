@@ -20,8 +20,8 @@ pub(crate) struct InputFile {
     pub head: Option<FileVersion>,
     /// Version in the working tree, if the file exists there.
     pub worktree: Option<FileVersion>,
-    /// Why this file's text diff cannot be displayed, if applicable.
-    pub placeholder: Option<Placeholder>,
+    /// Why each transition's text diff cannot be displayed, if applicable.
+    pub placeholders: [Option<Placeholder>; 2],
     /// Change from the merge base to HEAD.
     pub committed: ChangeKind,
     /// Change from HEAD to the working tree.
@@ -68,6 +68,8 @@ pub(crate) enum ChangeKind {
     Unchanged,
     /// The file contents or metadata changed.
     Modified,
+    /// The file permissions or type changed.
+    ModeChanged,
     /// The file did not exist in the previous version.
     Added,
     /// The file no longer exists.

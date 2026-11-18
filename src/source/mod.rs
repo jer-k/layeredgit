@@ -55,25 +55,31 @@ fn convert_file<E>(
     file: &ChangedFile,
     mut read: impl FnMut(Layer) -> Result<Contents, E>,
 ) -> Result<InputFile, E> {
-    let mut placeholder = file.is_binary().then_some(Placeholder::Binary);
     let mut version = |layer, version: Option<&repo::FileVersion>| {
         let Some(version) = version else {
-            return Ok(None);
+            return Ok((None, None));
         };
-        let (version, reason) = convert_version(&version.path, read(layer)?);
-        placeholder = placeholder.max(reason);
-        Ok(version)
+        Ok(convert_version(&version.path, read(layer)?))
     };
-    let base = version(Layer::Base, file.base.as_ref())?;
-    let head = version(Layer::Head, file.head.as_ref())?;
-    let worktree = version(Layer::Worktree, file.worktree.as_ref())?;
+    let (base, base_reason) = version(Layer::Base, file.base.as_ref())?;
+    let (head, head_reason) = version(Layer::Head, file.head.as_ref())?;
+    let (worktree, worktree_reason) = version(Layer::Worktree, file.worktree.as_ref())?;
+    let placeholder = |change: repo::Change, before, after| {
+        [change.binary.then_some(Placeholder::Binary), before, after]
+            .into_iter()
+            .flatten()
+            .max()
+    };
     Ok(InputFile {
         base,
         head,
         worktree,
-        placeholder,
-        committed: change_kind(file.committed.kind),
-        uncommitted: change_kind(file.uncommitted.kind),
+        placeholders: [
+            placeholder(file.committed, base_reason, head_reason),
+            placeholder(file.uncommitted, head_reason, worktree_reason),
+        ],
+        committed: change_kind(file.committed),
+        uncommitted: change_kind(file.uncommitted),
     })
 }
 
@@ -98,12 +104,14 @@ fn convert_version(path: &Path, contents: Contents) -> (Option<FileVersion>, Opt
     )
 }
 
-fn change_kind(kind: repo::ChangeKind) -> ChangeKind {
-    match kind {
+fn change_kind(change: repo::Change) -> ChangeKind {
+    match change.kind {
         repo::ChangeKind::None => ChangeKind::Unchanged,
         repo::ChangeKind::Added => ChangeKind::Added,
         repo::ChangeKind::Deleted => ChangeKind::Deleted,
-        repo::ChangeKind::Modified | repo::ChangeKind::TypeChanged => ChangeKind::Modified,
+        repo::ChangeKind::TypeChanged => ChangeKind::ModeChanged,
+        repo::ChangeKind::Modified if change.mode_changed => ChangeKind::ModeChanged,
+        repo::ChangeKind::Modified => ChangeKind::Modified,
         repo::ChangeKind::Renamed => ChangeKind::Renamed,
     }
 }

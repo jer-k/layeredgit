@@ -9,23 +9,27 @@ use rune_kit::Kit;
 
 use crate::state::{State, Status};
 
+/// Height of the review toolbar and native controls.
+pub(crate) const TOOLBAR_HEIGHT: f32 = 68.0;
+
 /// Draws the application in the current system appearance.
 pub(crate) fn review(state: &State, cx: &mut Cx<State>) -> El {
     let kit = Kit::neutral(cx.env().system_dark);
+    cx.caption_color(kit.c.text_base);
     col()
         .key("review")
         .w_full()
         .h_full()
         .fill(kit.c.page)
-        .child(chrome::toolbar(state, &kit))
+        .child(chrome::toolbar(state, &kit, cx.chrome_insets()))
         .child(match &state.status {
             Status::Loading => notice("Loading review…", None, &kit),
             Status::Failed(error) => notice("Couldn’t load review", Some(error), &kit),
-            Status::Ready { refresh_error } => workspace(state, refresh_error.as_deref(), &kit),
+            Status::Ready { refresh_error } => workspace(state, refresh_error.as_deref(), &kit, cx),
         })
 }
 
-fn workspace(state: &State, refresh_error: Option<&str>, kit: &Kit) -> El {
+fn workspace(state: &State, refresh_error: Option<&str>, kit: &Kit, cx: &Cx<State>) -> El {
     let mut pane = col()
         .key("review-pane")
         .grow(1.0)
@@ -43,11 +47,19 @@ fn workspace(state: &State, refresh_error: Option<&str>, kit: &Kit) -> El {
                 .truncate_middle(),
         );
     }
-    let pane = if state.review.files.is_empty() {
-        pane.child(notice("No changes to review", None, kit))
+    let pane = if state.rows.files.is_empty() {
+        let message = match state.filter {
+            crate::model::Filter::All => "No changes to review",
+            crate::model::Filter::Committed => "No committed changes",
+            crate::model::Filter::Uncommitted => "No uncommitted changes",
+        };
+        pane.child(notice(message, None, kit))
     } else {
-        pane.child(chrome::legend(kit))
-            .child(diff::pane(state, kit))
+        pane.child(chrome::legend(state, kit)).child(diff::pane(
+            state,
+            kit,
+            cx.layout_size("diff-scroll").map_or(0.0, |size| size[0]),
+        ))
     };
     row()
         .key("workspace")

@@ -20,7 +20,7 @@ fn refresh_keeps_filter_selection_expanded_fold_and_top_line_after_rename() {
     state.set_filter(Filter::Committed, &mut tx);
     state.toggle_file(0, &mut tx);
 
-    let FileBody::Text(diff) = &state.review.files[1].body else {
+    let FileBody::Text(diff) = state.review.files[1].body(Filter::All) else {
         panic!("the selected file should have a text diff");
     };
     let anchor = diff
@@ -33,7 +33,9 @@ fn refresh_keeps_filter_selection_expanded_fold_and_top_line_after_rename() {
         .rows
         .iter()
         .find_map(|row| match &row.kind {
-            RowKind::Fold(range) if row.file == 1 && range.contains(&anchor) => Some(range.clone()),
+            RowKind::Fold { range, .. } if row.file == 1 && range.contains(&anchor) => {
+                Some(range.clone())
+            }
             _ => None,
         })
         .unwrap();
@@ -53,12 +55,12 @@ fn refresh_keeps_filter_selection_expanded_fold_and_top_line_after_rename() {
     assert_eq!(state.active_file, Some(0));
     assert_eq!(state.collapsed, HashSet::from([1]));
 
-    let row = &state.rows.rows[state.top_row];
+    let row = &state.rows.rows[state.visible_rows.start];
     assert_eq!(row.file, 0);
     let RowKind::Line(index) = row.kind else {
         panic!("the line in the expanded fold should still be visible");
     };
-    let FileBody::Text(diff) = &state.review.files[0].body else {
+    let FileBody::Text(diff) = state.review.files[0].body(Filter::All) else {
         panic!("the renamed file should have a text diff");
     };
     assert_eq!(diff.lines[index].text, "line 21");
@@ -111,7 +113,7 @@ fn file(original: &str, latest: &str, texts: [&str; 3]) -> InputFile {
         base: version(original, base),
         head: version(original, head),
         worktree: version(latest, worktree),
-        placeholder: None,
+        placeholders: [None; 2],
         committed: ChangeKind::Modified,
         uncommitted: if original == latest {
             ChangeKind::Unchanged

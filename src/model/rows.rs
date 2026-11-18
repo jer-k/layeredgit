@@ -6,8 +6,11 @@ use super::{BASE, FileBody, FileDiff, Filter, HEAD, Line, Review, TextDiff, WORK
 #[derive(Default)]
 pub(crate) struct ReviewRows {
     pub(crate) rows: Vec<ReviewRow>,
-    pub(crate) headers: Vec<usize>,
+    pub(crate) files: Vec<usize>,
+    headers: Vec<usize>,
+    header_by_file: Vec<Option<usize>>,
     pub(crate) hunks: Vec<usize>,
+    pub(crate) widest_line: usize,
 }
 
 pub(crate) struct ReviewRow {
@@ -20,7 +23,7 @@ pub(crate) enum RowKind {
     Header,
     Hunk { start: usize, label: String },
     Line(usize),
-    Fold(Range<usize>),
+    Fold { range: Range<usize>, count: usize },
     Newline(&'static str),
     Placeholder(Cow<'static, str>),
     Space,
@@ -33,9 +36,19 @@ impl ReviewRows {
         collapsed: &HashSet<usize>,
         expanded: &HashSet<(usize, usize, usize)>,
     ) -> Self {
-        let mut rows = Self::default();
-        for (index, file) in review.files.iter().enumerate() {
+        let mut rows = Self {
+            header_by_file: vec![None; review.files.len()],
+            ..Self::default()
+        };
+        for &index in review.file_order(filter) {
+            let Some(file) = review.files.get(index) else {
+                continue;
+            };
+            rows.files.push(index);
             rows.headers.push(rows.rows.len());
+            if let Some(header) = rows.header_by_file.get_mut(index) {
+                *header = Some(rows.rows.len());
+            }
             rows.push(index, format!("header/{index}"), RowKind::Header);
             if !collapsed.contains(&index) {
                 rows.file_rows(index, file, filter, expanded);
@@ -45,6 +58,20 @@ impl ReviewRows {
         rows
     }
 
+    pub(crate) fn header(&self, file: usize) -> Option<usize> {
+        self.header_by_file.get(file).copied().flatten()
+    }
+
+    pub(crate) fn file_rows_range(&self, file: usize) -> Option<Range<usize>> {
+        let start = self.header(file)?;
+        let end = self
+            .headers
+            .get(self.headers.partition_point(|&row| row <= start))
+            .copied()
+            .unwrap_or(self.rows.len());
+        Some(start..end)
+    }
+
     fn file_rows(
         &mut self,
         index: usize,
@@ -52,18 +79,17 @@ impl ReviewRows {
         filter: Filter,
         expanded: &HashSet<(usize, usize, usize)>,
     ) {
-        let message = match &file.body {
+        let message = match file.body(filter) {
             FileBody::Text(diff) if !diff.hunks(filter).is_empty() => {
                 self.text_rows(index, diff, filter, expanded);
                 return;
             }
-            _ if !file.has_changes(filter) => Cow::Borrowed(match filter {
-                Filter::All => "No changes",
-                Filter::Committed => "No committed changes",
-                Filter::Uncommitted => "No uncommitted changes",
-            }),
             FileBody::Placeholder(reason) => reason.message(),
-            FileBody::Text(_) => Cow::Borrowed("No textual changes"),
+            FileBody::Text(_) => [Filter::Committed, Filter::Uncommitted]
+                .into_iter()
+                .filter(|&layer| filter == Filter::All || filter == layer)
+                .find_map(|layer| file.summary(layer).and_then(|(_, label)| label))
+                .unwrap_or(Cow::Borrowed("No textual changes")),
         };
         self.push(
             index,
@@ -88,7 +114,7 @@ impl ReviewRows {
                 format!("hunk/{file}/{}", hunk.start),
                 RowKind::Hunk {
                     start: hunk.start,
-                    label: hunk_label(&diff.lines, hunk.clone()),
+                    label: hunk_label(&diff.lines, hunk.clone(), filter),
                 },
             );
             self.lines(file, diff, filter, hunk.clone());
@@ -105,7 +131,8 @@ impl ReviewRows {
         expanded: &HashSet<(usize, usize, usize)>,
         range: Range<usize>,
     ) {
-        if range.is_empty() {
+        let count = diff.visible_count(filter, range.clone());
+        if count == 0 {
             return;
         }
         if expanded.contains(&(file, range.start, range.end)) {
@@ -114,7 +141,7 @@ impl ReviewRows {
             self.push(
                 file,
                 format!("fold/{file}/{}", range.start),
-                RowKind::Fold(range),
+                RowKind::Fold { range, count },
             );
         }
     }
@@ -126,6 +153,14 @@ impl ReviewRows {
             .filter(|marker| filter.includes(marker.destination))
             .peekable();
         for line in range {
+            let Some(content) = diff
+                .lines
+                .get(line)
+                .filter(|line| filter.change(line).is_some())
+            else {
+                continue;
+            };
+            self.widest_line = self.widest_line.max(content.columns);
             self.push(file, format!("line/{file}/{line}"), RowKind::Line(line));
             while newlines.next_if(|marker| marker.line < line).is_some() {}
             let mut shown = None;
@@ -154,8 +189,9 @@ impl ReviewRows {
     }
 }
 
-fn hunk_label(lines: &[Line], range: Range<usize>) -> String {
-    let bounds = |number: fn(&Line) -> Option<u32>| {
+fn hunk_label(lines: &[Line], range: Range<usize>, filter: Filter) -> String {
+    let bounds = |version| {
+        let number = |line: &Line| line.number(version);
         let mut present = lines
             .get(range.clone())
             .into_iter()
@@ -174,7 +210,8 @@ fn hunk_label(lines: &[Line], range: Range<usize>) -> String {
             (before.unwrap_or(0), 0)
         }
     };
-    let (base, old_count) = bounds(|line| line.base);
-    let (worktree, new_count) = bounds(|line| line.worktree);
-    format!("@@ -{base},{old_count} +{worktree},{new_count} @@")
+    let (old, new) = filter.columns();
+    let (old, old_count) = bounds(old);
+    let (new, new_count) = bounds(new);
+    format!("@@ -{old},{old_count} +{new},{new_count} @@")
 }

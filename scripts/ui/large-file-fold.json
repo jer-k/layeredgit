@@ -1,6 +1,6 @@
 {
   "events": [
-    {"t": 0.12, "type": "tap", "key": "file/7"},
+    {"t": 0.12, "type": "tap", "key": "file/src/generated.rs"},
     {"t": 0.52, "type": "tap", "key": "fold/7/104"},
     {"t": 0.95, "type": "scroll", "x": 900, "y": 480, "dy": -7000, "dur": 0.55},
     {"t": 1.65, "type": "scroll", "x": 900, "y": 480, "dy": -480, "dur": 0.30}

@@ -1,0 +1,6 @@
+{
+  "events": [
+    {"t": 0.12, "type": "tap", "key": "file/web/reference.txt"},
+    {"t": 0.72, "type": "tap", "key": "file/notes.txt"}
+  ]
+}

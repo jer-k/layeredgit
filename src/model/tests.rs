@@ -16,7 +16,7 @@ use super::*;
 fn demo_covers_all_lifetimes_and_counts_them_per_transition() {
     let review = Review::new(demo::review());
     let file = &review.files[0];
-    let FileBody::Text(diff) = &file.body else {
+    let FileBody::Text(diff) = file.body(Filter::All) else {
         panic!("expected text")
     };
     for class in [
@@ -58,40 +58,120 @@ fn demo_covers_all_lifetimes_and_counts_them_per_transition() {
 }
 
 #[test]
-fn filtering_preserves_context_and_three_lines_around_changes() {
+fn pair_projections_classify_lifetimes_and_use_the_pair_line_numbers() {
     let review = Review::new(demo::review());
-    let FileBody::Text(diff) = &review.files[0].body else {
+    let FileBody::Text(diff) = review.files[0].body(Filter::All) else {
         panic!("expected text")
     };
-    assert_eq!(diff.hunks(Filter::All).len(), 2);
-    assert_eq!(diff.hunks(Filter::Committed).len(), 2);
-    assert_eq!(diff.hunks(Filter::Uncommitted).len(), 1);
-    let hunk = diff.hunks(Filter::Uncommitted).first().unwrap();
-    let lines = &diff.lines[hunk.clone()];
-    let first = lines
-        .iter()
-        .position(|line| Filter::Uncommitted.appearance(line.change) != Context);
-    let last = lines
-        .iter()
-        .rposition(|line| Filter::Uncommitted.appearance(line.change) != Context);
-    assert_eq!(first, Some(3));
-    assert_eq!(last, Some(lines.len() - 4));
-    assert_eq!(Filter::Uncommitted.appearance(CommittedAdd), Context);
-    assert_eq!(Filter::Committed.appearance(UncommittedDelete), Context);
-    assert_eq!(
-        Filter::Uncommitted.appearance(CommittedThenRemoved),
-        CommittedThenRemoved
-    );
-    assert_eq!(
-        Filter::Committed.appearance(CommittedThenRemoved),
-        CommittedThenRemoved
-    );
+    for (all, committed, working) in [
+        (Context, Some(Context), Some(Context)),
+        (CommittedAdd, Some(CommittedAdd), Some(Context)),
+        (CommittedDelete, Some(CommittedDelete), None),
+        (
+            CommittedThenRemoved,
+            Some(CommittedAdd),
+            Some(UncommittedDelete),
+        ),
+        (UncommittedAdd, None, Some(UncommittedAdd)),
+        (UncommittedDelete, Some(Context), Some(UncommittedDelete)),
+    ] {
+        let line = diff.lines.iter().find(|line| line.change == all).unwrap();
+        assert_eq!(Filter::All.change(line), Some(all));
+        assert_eq!(Filter::Committed.change(line), committed);
+        assert_eq!(Filter::Uncommitted.change(line), working);
+    }
 
-    let rows = rows(&review, Filter::Uncommitted);
-    assert!(
-        rows.rows.iter().any(|row| row.file == 1
-            && matches!(&row.kind, RowKind::Placeholder(message) if message == "No uncommitted changes"))
+    let review = review_of(text_file([
+        "one\ntwo\nthree\nbase\nfive\nsix\nseven\neight\nnine\n",
+        "one\ntwo\nthree\nhead only\nfive\nsix\nseven\neight\nnine\n",
+        "one\ntwo\nthree\nwork a\nwork b\nwork c\nwork d\nwork e\nfive\nsix\nseven\neight\nnine\n",
+    ]));
+    let FileBody::Text(diff) = review.files[0].body(Filter::All) else {
+        panic!("expected text")
+    };
+    for (filter, header, texts) in [
+        (
+            Filter::Committed,
+            "@@ -1,7 +1,7 @@",
+            vec![
+                "one",
+                "two",
+                "three",
+                "base",
+                "head only",
+                "five",
+                "six",
+                "seven",
+            ],
+        ),
+        (
+            Filter::Uncommitted,
+            "@@ -1,7 +1,11 @@",
+            vec![
+                "one",
+                "two",
+                "three",
+                "head only",
+                "work a",
+                "work b",
+                "work c",
+                "work d",
+                "work e",
+                "five",
+                "six",
+                "seven",
+            ],
+        ),
+    ] {
+        let rows = rows(&review, filter);
+        assert_eq!(rows.hunks.len(), 1);
+        assert!(
+            matches!(&rows.rows[rows.hunks[0]].kind, RowKind::Hunk { label, .. } if label == header)
+        );
+        assert_eq!(
+            rows.rows
+                .iter()
+                .filter_map(|row| match row.kind {
+                    RowKind::Line(index) => Some(diff.lines[index].text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            texts
+        );
+        assert!(
+            rows.rows
+                .iter()
+                .any(|row| matches!(row.kind, RowKind::Fold { count: 2, .. }))
+        );
+    }
+
+    let demo = Review::new(demo::review());
+    assert!(!rows(&demo, Filter::Uncommitted).files.contains(&1));
+}
+
+#[test]
+fn unreadable_worktree_still_allows_the_committed_projection() {
+    let mut file = text_file(["old\n", "new\n", ""]);
+    file.placeholders = [None, Some(Placeholder::Binary)];
+    file.worktree.as_mut().unwrap().text = None;
+    let review = review_of(file);
+    let file = &review.files[0];
+    assert!(matches!(
+        file.body(Filter::All),
+        FileBody::Placeholder(Placeholder::Binary)
+    ));
+    assert!(matches!(
+        file.body(Filter::Uncommitted),
+        FileBody::Placeholder(Placeholder::Binary)
+    ));
+    assert_eq!(
+        file.committed_counts,
+        Counts {
+            added: 1,
+            removed: 1
+        }
     );
+    assert_eq!(rows(&review, Filter::Committed).hunks.len(), 1);
 }
 
 #[test]
@@ -101,9 +181,9 @@ fn folds_expand_only_their_range_and_keep_the_other_keys() {
     let fold = original
         .rows
         .iter()
-        .find(|row| row.file == 8 && matches!(row.kind, RowKind::Fold(_)))
+        .find(|row| row.file == 8 && matches!(row.kind, RowKind::Fold { .. }))
         .unwrap();
-    let RowKind::Fold(range) = &fold.kind else {
+    let RowKind::Fold { range, .. } = &fold.kind else {
         panic!("expected a fold")
     };
     assert!(range.len() > 100);
@@ -128,12 +208,12 @@ fn added_deleted_renamed_and_binary_files_keep_their_review_metadata() {
     let review = Review::new(demo::review());
     let files = &review.files;
     assert_eq!(
-        files[3].path_label(),
+        files[3].path_label(Filter::All),
         "docs/review-notes.md → docs/review-guide.md"
     );
     assert_eq!(files[5].path(), "src/legacy.rs");
     for (index, class) in [(4, CommittedAdd), (5, CommittedDelete)] {
-        let FileBody::Text(diff) = &files[index].body else {
+        let FileBody::Text(diff) = files[index].body(Filter::All) else {
             panic!("expected text")
         };
         assert!(!diff.lines.is_empty());
@@ -212,7 +292,7 @@ fn syntax_uses_last_living_version_and_whole_version_context() {
         "anchor\r\n/*\r\n\tlet interim = 7;\r\nlet shared = 9;\r\n*/\r\n",
         "anchor\r\nlet shared = 9;\r\n",
     ]));
-    let FileBody::Text(diff) = &review.files[0].body else {
+    let FileBody::Text(diff) = review.files[0].body(Filter::All) else {
         panic!("expected text")
     };
     let find = |word| {
@@ -239,6 +319,12 @@ fn syntax_uses_last_living_version_and_whole_version_context() {
     }
     let shared = find("let shared");
     assert_eq!(shared.change, Context);
+    assert!(
+        shared
+            .highlights(Filter::Committed)
+            .iter()
+            .any(|(_, paint)| { *paint == Paint::Kind(Syntax::Comment) })
+    );
     assert!(
         shared.highlights.iter().any(|(range, paint)| {
             *paint == Paint::Kind(Syntax::Keyword) && range.start == 0 && range.end >= "let".len()
@@ -271,7 +357,7 @@ fn text_file(texts: [&str; 3]) -> InputFile {
         base,
         head,
         worktree,
-        placeholder: None,
+        placeholders: [None; 2],
         committed: ChangeKind::Modified,
         uncommitted: ChangeKind::Modified,
     }

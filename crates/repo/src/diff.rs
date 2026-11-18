@@ -59,6 +59,8 @@ pub struct Change {
     pub kind: ChangeKind,
     /// Git reported a binary diff, or the untracked file looks binary under its diff attributes.
     pub binary: bool,
+    /// Both entries exist and have different Git modes.
+    pub mode_changed: bool,
     /// Text line counts, when available.
     pub lines: Option<LineCounts>,
 }
@@ -67,6 +69,7 @@ impl Change {
     const NONE: Self = Self {
         kind: ChangeKind::None,
         binary: false,
+        mode_changed: false,
         lines: None,
     };
 }
@@ -161,6 +164,7 @@ fn join_layers(
                 },
                 binary: previous.change.binary || delta.change.binary,
                 lines: None,
+                ..Change::NONE
             };
             previous.after = delta.after;
         } else {
@@ -250,6 +254,7 @@ fn parse_diff(output: &[u8]) -> Result<Vec<Delta>, Error> {
         ) else {
             return Err(Error::Protocol(DIFF));
         };
+        let old = old.strip_prefix(b":").ok_or(Error::Protocol(DIFF))?;
         let kind = match status.first() {
             Some(b'A') => ChangeKind::Added,
             Some(b'D') => ChangeKind::Deleted,
@@ -265,13 +270,11 @@ fn parse_diff(output: &[u8]) -> Result<Vec<Delta>, Error> {
             old_path
         };
         changes.push(Delta {
-            before: version(
-                old.strip_prefix(b":").ok_or(Error::Protocol(DIFF))?,
-                old_path,
-            )?,
+            before: version(old, old_path)?,
             after: version(new, new_path)?,
             change: Change {
                 kind,
+                mode_changed: old != b"000000" && new != b"000000" && old != new,
                 ..Change::NONE
             },
         });
@@ -533,6 +536,7 @@ fn untracked_delta(
             kind: ChangeKind::Added,
             binary,
             lines,
+            ..Change::NONE
         },
     }
 }
