@@ -12,20 +12,24 @@ pub(crate) const USAGE: &str =
     "Usage: git-viewer-rune [--repo PATH] [--base REF] [--demo] [--demo-pulse] [Rune options]";
 
 pub(crate) struct Options {
-    /// Absent in demo mode.
-    pub(crate) repository: Option<Repository>,
+    pub(crate) launch: Launch,
     pub(crate) demo_pulse: bool,
     /// Rune's flags, in the order the user supplied them.
     pub(crate) tooling: Vec<String>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Launch {
+    Start,
+    Review(Repository),
+    Demo,
+}
+
 impl Options {
     pub(crate) fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Self, String> {
         let mut args = args.into_iter().peekable();
-        let mut repository = Repository {
-            path: PathBuf::from("."),
-            base: None,
-        };
+        let mut path = None;
+        let mut base = None;
         let mut demo = false;
         let mut demo_pulse = false;
         let mut tooling = Vec::new();
@@ -41,13 +45,14 @@ impl Options {
                         .filter(|value| !value.is_empty())
                         .ok_or_else(|| format!("{} needs a value", flag.to_string_lossy()))?;
                     if flag == "--repo" {
-                        repository.path = value.into();
+                        path = Some(PathBuf::from(value));
                     } else {
-                        repository.base = Some(value);
+                        base = Some(value);
                     }
                 }
                 b"--demo" if inline.is_none() => demo = true,
                 b"--demo-pulse" if inline.is_none() => demo_pulse = true,
+                flag if flag.starts_with(b"-psn_") => {}
                 _ => {
                     tooling.push(arg.into_string().map_err(|arg| {
                         format!("Rune arguments must be UTF-8: {}", arg.display())
@@ -55,8 +60,18 @@ impl Options {
                 }
             }
         }
+        let launch = if demo || demo_pulse && path.is_none() && base.is_none() {
+            Launch::Demo
+        } else if path.is_some() || base.is_some() {
+            Launch::Review(Repository {
+                path: path.unwrap_or_else(|| PathBuf::from(".")),
+                base,
+            })
+        } else {
+            Launch::Start
+        };
         Ok(Self {
-            repository: (!demo).then_some(repository),
+            launch,
             demo_pulse,
             tooling,
         })
@@ -83,22 +98,44 @@ mod tests {
             .map(OsString::from),
         )
         .unwrap();
-        let repository = options.repository.unwrap();
-        assert_eq!(repository.path, PathBuf::from("a path"));
         assert_eq!(
-            repository.base.as_deref(),
-            Some(OsStr::new("refs/heads/main"))
+            options.launch,
+            Launch::Review(Repository {
+                path: "a path".into(),
+                base: Some("refs/heads/main".into()),
+            })
         );
         assert_eq!(
             options.tooling,
             ["--size", "1400x900", "--tree", "out.json"]
         );
         assert!(Options::parse(["--repo", "--snap", "out.png"].map(OsString::from)).is_err());
-        assert!(
+        assert_eq!(
             Options::parse(["--demo", "--snap", "out.png"].map(OsString::from))
                 .unwrap()
-                .repository
-                .is_none()
+                .launch,
+            Launch::Demo,
+        );
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used, reason = "The supplied options are valid")]
+    fn distinguishes_finder_launches_and_base_only_terminal_launches() {
+        assert_eq!(Options::parse([]).unwrap().launch, Launch::Start);
+        assert_eq!(
+            Options::parse([OsString::from("-psn_0_42")])
+                .unwrap()
+                .launch,
+            Launch::Start
+        );
+        assert_eq!(
+            Options::parse([OsString::from("--base=-previous")])
+                .unwrap()
+                .launch,
+            Launch::Review(Repository {
+                path: ".".into(),
+                base: Some("-previous".into())
+            })
         );
     }
 }

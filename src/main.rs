@@ -2,30 +2,36 @@
 
 mod cli;
 mod demo;
+mod desktop;
+mod frame;
 mod input;
+mod instance;
 mod model;
 mod palette;
+mod recents;
 mod source;
+mod start;
 mod state;
 mod view;
 
-use std::{env, process};
+use std::{env, process::ExitCode};
 
-use rune::{App, AppSpec, Titlebar, tooling};
-
-use state::State;
+const APP_NAME: &str = "Git Viewer";
+const APP_ID: &str = "local.git-viewer";
 
 #[allow(
     clippy::print_stderr,
-    reason = "Report command-line usage and parse failures"
+    reason = "Report command-line usage and launch failures"
 )]
-fn main() {
+fn main() -> ExitCode {
+    rune_mac::launch();
     rune::prewarm_gpu();
+
     let options = match cli::Options::parse(env::args_os().skip(1)) {
         Ok(options) => options,
         Err(error) => {
             eprintln!("{error}\n{}", cli::USAGE);
-            process::exit(2);
+            return ExitCode::from(2);
         }
     };
     if options
@@ -35,36 +41,12 @@ fn main() {
     {
         eprintln!("{}\n", cli::USAGE);
     }
-    let app = App::new(AppSpec {
-        on_key: Some(State::key),
-        scenes: &[("reduced-motion", State::force_reduced_motion)],
-        setup: Some(State::setup),
-        poll: Some(State::poll),
-        families: ("Inter", "ui-monospace"),
-        min_size: Some((920.0, 480.0)),
-        ..AppSpec::new(
-            "Git Viewer",
-            (1240.0, 820.0),
-            || State::open(None, false, false),
-            view::review,
-        )
-    })
-    .titlebar(Titlebar::new(view::TOOLBAR_HEIGHT))
-    .args(options.tooling)
-    .init(move || {
-        State::open(
-            options.repository,
-            tooling::headless_run().is_some(),
-            options.demo_pulse,
-        )
-    })
-    .on_visibility(State::visibility);
-    let handle = app.handle();
-    app.on_ready(move |_| {
-        handle.update_if(|state, tx| {
-            state.request_refresh(tx);
-            false
-        });
-    })
-    .run();
+    rune::set_app_id(APP_ID);
+    match desktop::run(options) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("{error}");
+            ExitCode::FAILURE
+        }
+    }
 }

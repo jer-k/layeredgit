@@ -16,6 +16,8 @@ use crate::{
 /// Height of the review toolbar and native controls.
 pub(crate) const TOOLBAR_HEIGHT: f32 = 68.0;
 
+pub(crate) use chrome::review_mark;
+
 /// Draws the application in the current system appearance.
 pub(crate) fn review(state: &State, cx: &mut Cx<State>) -> El {
     if state.headless_reduced_motion {

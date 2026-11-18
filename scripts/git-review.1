@@ -1,0 +1,17 @@
+.TH GIT-REVIEW 1
+.SH NAME
+git-review \- open Git Viewer for the current working tree
+.SH SYNOPSIS
+.B git review
+.RI [ BASE ]
+.SH DESCRIPTION
+Open or focus the review window for the working tree containing the current
+directory. The review shows the merge base, HEAD, and the working tree.
+.PP
+With
+.IR BASE ,
+compare against that Git ref. The default tries
+.BR origin/HEAD ,
+.BR main ,
+then
+.BR master .

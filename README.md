@@ -3,10 +3,42 @@
 A local Git branch review app built with [Rune](https://github.com/anomalyco/rune).
 The diff compares the merge base, HEAD, and working tree.
 
-With [rustup](https://rustup.rs/) and Git 2.42 or newer installed, run `cargo run` from a
-working tree. Pass `--repo PATH` to review another repository or `--base REF` to
-override the default base (origin/HEAD, main, or master). Pass `--demo` for the
-built-in example.
+## Install on macOS
+
+Run this command from the checkout with rustup, just, Python 3, and Git 2.42 or
+newer installed.
+
+```sh
+just install
+```
+
+This builds the release app, installs `~/Applications/Git Viewer.app`, and puts
+`git-review` in `~/.local/bin`. Add `~/.local/bin` to your shell's `PATH`, then run
+`git review` anywhere inside a working tree. To compare against a specific ref,
+run `git review BASE`. The default tries `origin/HEAD`, then `main`, then `master`.
+Run `git review --help` for the manual or `git review -h` for a short usage line.
+
+Open **Git Viewer** from Finder, Spotlight, or the Dock for the repository picker
+and recent working trees. Press **⌘O** in a review to return to the picker. Each
+working tree gets its own window. Running `git review` again for that tree focuses
+the same window and applies a base when you supply one. Closing the last window
+leaves the app in the Dock so you can reopen the picker. Use **⌘Q** to quit.
+
+After pulling changes, run `just install` again. Rune's installer swaps the bundle
+in place and relaunches a running app with its original arguments. Remove the
+bundle and launcher with `just uninstall`. For another location, set the same
+`APP_DIR` and `BIN_DIR` on both commands.
+
+```sh
+APP_DIR="$PWD/target/install-test/Applications" BIN_DIR="$PWD/target/install-test/bin" just install
+APP_DIR="$PWD/target/install-test/Applications" BIN_DIR="$PWD/target/install-test/bin" just uninstall
+```
+
+## Development
+
+Run `cargo run -- --repo .` to review the current working tree, `cargo run` for
+the start window, or `cargo run -- --demo` for the built-in example. Pass
+`--base REF` to override the comparison base.
 
 The review follows filesystem changes and checks Git status periodically. Press
 `r` to refresh immediately. While the fresh-line highlight is active, press `p`

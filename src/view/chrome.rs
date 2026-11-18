@@ -11,26 +11,28 @@ use crate::{
 
 use super::theme::{Provenance, accent_surface, dot};
 
+pub(crate) fn review_mark(kit: &Kit, size: f32) -> El {
+    el().size(size, size)
+        .center()
+        .radius(kit.radius.lg)
+        .fill(accent_surface(kit))
+        .child(
+            text("±")
+                .font(TextStyle {
+                    size: size * 0.625,
+                    weight: 600.0,
+                    ..kit.ty.mono
+                })
+                .color(kit.c.info.fg),
+        )
+}
+
 pub(super) fn toolbar(state: &State, kit: &Kit, insets: ChromeInsets) -> El {
     let c = &kit.c;
     let title = row()
         .items_center()
         .gap(10.0)
-        .child(
-            el().size(32.0, 32.0)
-                .center()
-                .radius(kit.radius.lg)
-                .fill(accent_surface(kit))
-                .child(
-                    text("±")
-                        .font(TextStyle {
-                            size: 20.0,
-                            weight: 600.0,
-                            ..kit.ty.mono
-                        })
-                        .color(c.info.fg),
-                ),
-        )
+        .child(review_mark(kit, 32.0))
         .child(
             text("Review changes")
                 .font(TextStyle {
