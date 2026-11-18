@@ -1,4 +1,4 @@
-# layeredgit
+# <img src="assets/icon.png" alt="" width="40" height="40"> layeredgit
 
 Run `layeredgit` in a Git repo to review your branch the way you would read a
 GitHub pull request, without pushing. The name is a nod to
