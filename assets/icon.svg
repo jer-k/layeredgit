@@ -1,22 +1,22 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <title>Layeredgit · Stacked Sheets</title>
+  <title>layeredgit · Stacked Sheets (blue and gold)</title>
   <defs>
     <path id="tile" d="M356 100H668C853 100 924 171 924 356V668C924 853 853 924 668 924H356C171 924 100 853 100 668V356C100 171 171 100 356 100Z"/>
     <linearGradient id="shell" x2=".8" y2="1">
-      <stop stop-color="#2C4D66"/>
-      <stop offset="1" stop-color="#121F38"/>
+      <stop stop-color="#3d5f86"/>
+      <stop offset="1" stop-color="#1d2f47"/>
     </linearGradient>
     <linearGradient id="rim" x2="0" y2="1">
-      <stop stop-color="#B8D9FF" stop-opacity=".5"/>
-      <stop offset="1" stop-color="#78ADF2" stop-opacity=".12"/>
+      <stop stop-color="#c9dcf2" stop-opacity=".5"/>
+      <stop offset="1" stop-color="#7f9fc4" stop-opacity=".12"/>
     </linearGradient>
     <linearGradient id="committed" x2=".85" y2="1">
-      <stop stop-color="#7CE5BA"/>
-      <stop offset="1" stop-color="#2CB587"/>
+      <stop stop-color="#7fb0c2"/>
+      <stop offset="1" stop-color="#5a8c9d"/>
     </linearGradient>
     <linearGradient id="working" x2=".85" y2="1">
-      <stop stop-color="#3B7CF5"/>
-      <stop offset="1" stop-color="#214BB7"/>
+      <stop stop-color="#fee27e"/>
+      <stop offset="1" stop-color="#e9b93f"/>
     </linearGradient>
     <filter id="shadow" x="-.2" y="-.2" width="1.4" height="1.4">
       <feGaussianBlur stdDeviation="22"/>
@@ -27,8 +27,8 @@
   <use href="#tile" fill="url(#shell)" stroke="url(#rim)" stroke-width="4"/>
   <rect x="236" y="343" width="576" height="416" rx="102" fill="#050D1E" opacity=".44" filter="url(#shadow)"/>
   <rect x="246" y="348" width="580" height="407" rx="98" fill="url(#committed)"/>
-  <rect x="206" y="293" width="582" height="407" rx="98" fill="#0B2749" opacity=".35" filter="url(#shadow)"/>
-  <rect x="198" y="269" width="582" height="420" rx="98" fill="url(#working)" stroke="#B9D8FF" stroke-opacity=".45" stroke-width="5"/>
-  <path transform="translate(496 479) scale(1.105 1.17) translate(-496 -479)" fill="#F6FAFF" d="M271 354H348V533H453V604H271Z
+  <rect x="206" y="293" width="582" height="407" rx="98" fill="#0d1a2b" opacity=".35" filter="url(#shadow)"/>
+  <rect x="198" y="269" width="582" height="420" rx="98" fill="url(#working)" stroke="#fff3c4" stroke-opacity=".45" stroke-width="5"/>
+  <path transform="translate(496 479) scale(1.105 1.17) translate(-496 -479)" fill="#2b4462" d="M271 354H348V533H453V604H271Z
     M600 350C648 350 692 369 718 401L663 450C648 431 627 421 602 421C567 421 542 444 542 478C542 514 567 537 602 537C617 537 631 534 642 527V511H598V456H716V568C688 593 647 608 600 608C522 608 463 555 463 479C463 403 522 350 600 350Z"/>
 </svg>
