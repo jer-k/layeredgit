@@ -58,17 +58,22 @@ impl VersionInk {
 }
 
 /// Displays tabs at four-column stops while preserving line-local byte ranges.
-pub(super) fn expand_tabs(text: &str, mut highlights: Vec<Highlight>) -> (String, Vec<Highlight>) {
+pub(super) fn expand_tabs(
+    text: &str,
+    mut highlights: Vec<Highlight>,
+) -> (String, Vec<Highlight>, Box<[Range<usize>]>) {
     if !text.contains('\t') {
-        return (text.into(), highlights);
+        return (text.into(), highlights, Box::default());
     }
     let mut shown = String::with_capacity(text.len());
     let mut tabs = Vec::new();
+    let mut padding = Vec::new();
     let mut extra = 0;
     let mut column = 0;
     for (byte, ch) in text.char_indices() {
         if ch == '\t' {
             let width = 4 - column % 4;
+            padding.push(shown.len()..shown.len() + width);
             shown.extend(std::iter::repeat_n(' ', width));
             extra += width - 1;
             tabs.push((byte, extra));
@@ -88,5 +93,5 @@ pub(super) fn expand_tabs(text: &str, mut highlights: Vec<Highlight>) -> (String
     for (range, _) in &mut highlights {
         *range = range.start + shift(range.start)..range.end + shift(range.end);
     }
-    (shown, highlights)
+    (shown, highlights, padding.into_boxed_slice())
 }

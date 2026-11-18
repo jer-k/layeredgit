@@ -1,0 +1,13 @@
+{
+  "events": [
+    {"t": 0.12, "type": "tap", "key": "file/src/lib.rs"},
+    {"t": 0.48, "type": "tap", "key": "wrap"},
+    {"t": 0.92, "type": "drag", "x": 790, "y": 317, "dx": -15, "dy": 20, "dur": 0.4},
+    {"t": 1.37, "type": "key", "cmd": true, "name": "c"},
+    {"t": 1.55, "hold": "shift"},
+    {"t": 1.58, "type": "tap", "x": 769, "y": 377},
+    {"t": 1.69, "hold": ""},
+    {"t": 1.75, "type": "key", "cmd": true, "name": "c"},
+    {"t": 1.9, "type": "mark", "name": "end"}
+  ]
+}

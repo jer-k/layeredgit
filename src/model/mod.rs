@@ -4,6 +4,7 @@ pub(crate) mod fresh;
 mod highlighting;
 mod projection;
 mod rows;
+pub(crate) mod selection;
 
 use std::{
     borrow::Cow,
@@ -123,6 +124,8 @@ pub(crate) struct TextDiff {
 
 pub(crate) struct Line {
     pub(crate) text: String,
+    /// Display byte ranges taken up by source tabs.
+    pub(crate) tabs: Box<[Range<usize>]>,
     columns: usize,
     highlights: Box<[Highlight]>,
     head_highlights: Option<Box<[Highlight]>>,
@@ -412,7 +415,7 @@ impl Line {
         highlights: Vec<Highlight>,
         head_highlights: Option<Vec<Highlight>>,
     ) -> Self {
-        let (text, highlights) = highlighting::expand_tabs(line.text(), highlights);
+        let (text, highlights, tabs) = highlighting::expand_tabs(line.text(), highlights);
         let head_highlights = head_highlights.map(|highlights| {
             highlighting::expand_tabs(line.text(), highlights)
                 .1
@@ -425,6 +428,7 @@ impl Line {
             .sum();
         Self {
             text,
+            tabs,
             columns,
             highlights: highlights.into_boxed_slice(),
             head_highlights,

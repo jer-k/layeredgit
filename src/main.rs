@@ -11,6 +11,7 @@ mod palette;
 mod panels;
 mod preferences;
 mod repositories;
+mod selection;
 mod source;
 mod state;
 mod view;

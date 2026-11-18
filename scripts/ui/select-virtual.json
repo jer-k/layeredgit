@@ -1,0 +1,21 @@
+{
+  "events": [
+    {"t": 0.12, "type": "tap", "key": "file/src/generated.rs"},
+    {"t": 0.52, "type": "tap", "key": "fold/7/104"},
+    {"t": 0.90, "type": "mark", "name": "drag-start"},
+    {"t": 0.90, "type": "drag", "x": 706, "y": 270, "dx": 120, "dy": 376, "dur": 0.65},
+    {"t": 1.56, "type": "mark", "name": "drag-end"},
+    {"t": 1.68, "type": "key", "cmd": true, "name": "c"},
+    {"t": 1.85, "type": "down", "x": 704, "y": 270},
+    {"t": 2.00, "type": "move", "x": 846, "y": 716},
+    {"t": 2.15, "type": "mark", "name": "edge-before"},
+    {"t": 2.70, "type": "mark", "name": "edge-after"},
+    {"t": 2.80, "type": "wheel", "x": 835, "y": 590, "dy": -9201},
+    {"t": 3.10, "type": "move", "x": 827, "y": 582},
+    {"t": 3.22, "type": "up", "x": 827, "y": 582},
+    {"t": 3.32, "type": "key", "cmd": true, "name": "c"},
+    {"t": 3.50, "type": "wheel", "x": 830, "y": 500, "dy": -6500},
+    {"t": 3.80, "type": "key", "cmd": true, "name": "c"},
+    {"t": 3.96, "type": "mark", "name": "end"}
+  ]
+}

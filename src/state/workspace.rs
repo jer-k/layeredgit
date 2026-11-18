@@ -323,7 +323,7 @@ impl State {
             }
         }
         next.sidebar_reveal = next.active_file;
-        let [left, top] = next.scroll_position.get();
+        let [left, top] = next.scroll_position.get().offset;
         tx.scroll_to_instant("diff-scroll", left, top);
         if let Some(entry) = index.and_then(|index| workspace.entries.get(index)) {
             tx.scroll_into_view_in("repository-list", row_key(&entry.repository.path));

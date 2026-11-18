@@ -1,0 +1,21 @@
+{
+  "events": [
+    {"t": 0.12, "type": "tap", "key": "file/src/lib.rs"},
+    {"t": 0.55, "type": "drag", "x": 698, "y": 297, "dx": 86, "dy": 121, "dur": 0.35},
+    {"t": 0.94, "type": "mark", "name": "multiline"},
+    {"t": 0.97, "type": "key", "cmd": true, "name": "c"},
+    {"t": 1.15, "type": "double-click", "x": 767, "y": 337},
+    {"t": 1.42, "type": "key", "cmd": true, "name": "c"},
+    {"t": 1.60, "type": "triple-click", "x": 718, "y": 357},
+    {"t": 2.03, "type": "key", "cmd": true, "name": "c"},
+    {"t": 2.20, "hold": "shift"},
+    {"t": 2.25, "type": "tap", "x": 741, "y": 397},
+    {"t": 2.36, "hold": ""},
+    {"t": 2.42, "type": "key", "cmd": true, "name": "c"},
+    {"t": 2.55, "type": "secondary-click", "x": 722, "y": 357},
+    {"t": 2.74, "type": "menu-pick", "id": "copy"},
+    {"t": 2.91, "type": "key", "cmd": true, "name": "a"},
+    {"t": 3.02, "type": "key", "cmd": true, "name": "c"},
+    {"t": 3.18, "type": "mark", "name": "end"}
+  ]
+}
