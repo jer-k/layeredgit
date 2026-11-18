@@ -198,14 +198,9 @@ pub(crate) fn fixture() -> (tempfile::TempDir, Repository) {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("fixture repo");
     let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/make-fixture-repo.sh");
-    let output = Command::new("sh")
+    let output = fixture_command("sh")
         .arg(script)
         .arg(&path)
-        .env("GIT_CONFIG_COUNT", "0")
-        .env_remove("GIT_CONFIG_PARAMETERS")
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
         .output()
         .unwrap();
     assert!(
@@ -214,4 +209,18 @@ pub(crate) fn fixture() -> (tempfile::TempDir, Repository) {
         String::from_utf8_lossy(&output.stderr)
     );
     (directory, Repository { path, base: None })
+}
+
+/// Starts a fixture command outside any Git context inherited from a hook.
+pub(crate) fn fixture_command(program: &str) -> Command {
+    let mut command = Command::new(program);
+    for (name, _) in std::env::vars_os() {
+        if name.as_encoded_bytes().starts_with(b"GIT_") {
+            command.env_remove(name);
+        }
+    }
+    command
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    command
 }

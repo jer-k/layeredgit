@@ -3,13 +3,14 @@ use std::{borrow::Cow, ops::Range, rc::Rc};
 use diff_stack::ThreeWayChange;
 
 use rune::{
-    Align, Color, Cursor, El, GrowthSpec, Live, ScrollSpec, Shadow, TextStyle, Transition, col, el,
-    icon, memo, rich, row, text,
+    Align, Color, Cursor, El, GrowthSpec, Live, MotionIntent, ScrollSpec, Shadow, TextStyle,
+    Transition, col, el, icon, memo, rich, row, text,
 };
 use rune_kit::{Kit, syntax::SyntaxTheme};
 
 use crate::{
     model::{Counts, FileBody, FileDiff, Filter, Line, RowKind},
+    palette::Palette,
     state::{HEADER_HEIGHT, State},
 };
 
@@ -17,22 +18,27 @@ use super::theme::{Provenance, accent_surface, dot, tint};
 
 const LINE_HEIGHT: f32 = 20.0;
 const NUMBER_WIDTH: f32 = 57.0;
-const EDGE_WIDTH: f32 = 3.0;
 const MARKER_WIDTH: f32 = 35.0;
-const CODE_INSET: f32 = EDGE_WIDTH + NUMBER_WIDTH * 2.0 + MARKER_WIDTH;
 const CODE_SIZE: f32 = 12.0;
 const CODE_PADDING: f32 = 19.0;
 
-pub(super) fn pane(state: &State, kit: &Kit, viewport_width: f32) -> El {
+pub(super) fn pane(state: &State, kit: &Kit, palette: Palette, viewport_width: f32) -> El {
     // Keep the width stable while the virtual window moves through shorter rows.
     #[allow(
         clippy::cast_precision_loss,
         reason = "Convert code columns to layout points"
     )]
-    let content_width =
-        CODE_INSET + CODE_PADDING + state.rows.widest_line as f32 * (0.6 * CODE_SIZE);
+    let content_width = code_inset(palette.edge_width)
+        + CODE_PADDING
+        + state.rows.widest_line as f32 * (0.6 * CODE_SIZE);
     let horizontal = !state.wrap && viewport_width > 0.0 && content_width > viewport_width;
-    let look = Rc::new(DiffLook::new(kit, horizontal.then_some(viewport_width)));
+    let show_counts = viewport_width == 0.0 || viewport_width >= 450.0;
+    let look = Rc::new(DiffLook::new(
+        kit,
+        palette,
+        horizontal.then_some(viewport_width),
+        show_counts,
+    ));
     let render = Rc::clone(&look);
     let list = col()
         .key("diff-rows")
@@ -82,27 +88,34 @@ pub(super) fn pane(state: &State, kit: &Kit, viewport_width: f32) -> El {
         && let Some(file) = state.review.files.get(index)
     {
         pane = pane.child(
-            file_header(index, file, state.filter, false, true, kit)
+            file_header(index, file, state.filter, false, true, show_counts, kit)
                 .key(format!("sticky-header/{index}"))
                 .absolute(0.0, 0.0)
                 .w_full(),
         );
     }
-    pane.children(super::pulse::hint(state, kit))
+    pane.children(super::pulse::hint(state, kit, palette))
+}
+
+fn code_inset(edge_width: f32) -> f32 {
+    edge_width + NUMBER_WIDTH * 2.0 + MARKER_WIDTH
 }
 
 struct DiffLook {
     kit: Kit,
+    palette: Palette,
     syntax: SyntaxTheme,
     code: TextStyle,
     folding: Color,
     horizontal: Option<f32>,
+    show_counts: bool,
 }
 
 impl DiffLook {
-    fn new(kit: &Kit, horizontal: Option<f32>) -> Self {
+    fn new(kit: &Kit, palette: Palette, horizontal: Option<f32>, show_counts: bool) -> Self {
         Self {
             kit: kit.clone(),
+            palette,
             syntax: SyntaxTheme::from_kit(kit),
             code: TextStyle {
                 size: CODE_SIZE,
@@ -110,6 +123,7 @@ impl DiffLook {
                 ..kit.ty.mono
             },
             horizontal,
+            show_counts,
             folding: tint(
                 kit.c.bg_base,
                 kit.c.info.icon,
@@ -133,6 +147,7 @@ impl DiffLook {
             filter,
             state.wrap,
             self.kit.dark,
+            self.palette.memo_key(),
             collapsed,
         );
         match &entry.kind {
@@ -154,11 +169,17 @@ impl DiffLook {
                     el().h(LINE_HEIGHT)
                 }
             }
-            kind => memo(&entry.key, (version, horizontal), || {
+            kind => memo(&entry.key, (version, horizontal, self.show_counts), || {
                 let row = match kind {
-                    RowKind::Header => {
-                        file_header(entry.file, file, filter, collapsed, false, &self.kit)
-                    }
+                    RowKind::Header => file_header(
+                        entry.file,
+                        file,
+                        filter,
+                        collapsed,
+                        false,
+                        self.show_counts,
+                        &self.kit,
+                    ),
                     RowKind::Hunk { label, .. } => self.hunk(label, filter),
                     RowKind::Fold { range, count } => self.fold(entry.file, range.clone(), *count),
                     RowKind::Newline(version) => self.newline(version),
@@ -184,7 +205,7 @@ impl DiffLook {
         pulse: Option<&Live<f32>>,
     ) -> El {
         let c = &self.kit.c;
-        let p = Provenance::new(change, &self.kit);
+        let p = Provenance::new(change, &self.kit, self.palette);
         let (old, new) = filter.columns();
         let head_only = change == ThreeWayChange::CommittedThenRemoved;
         let new_number = if head_only {
@@ -204,20 +225,23 @@ impl DiffLook {
         } else {
             code.single_line()
         };
-        let code = if p.struck {
-            code.strike(0, line.text.len(), None)
+        let code = if let Some(strike) = p.strike {
+            code.strike(0, line.text.len(), Some(strike))
         } else {
             code
         };
+        let wash =
+            || pulse.map(|opacity| super::pulse::wash(&self.kit, self.palette, opacity, 0.0));
         let mut gutter = row()
             .key("gutter")
             .items_stretch()
             .fill(p.gutter)
-            .children(pulse.map(|opacity| super::pulse::wash(&self.kit, opacity, 0.0)))
-            .child(
-                el().w(EDGE_WIDTH)
-                    .fill(if p.working { c.info.icon } else { p.gutter }),
-            )
+            .children(wash())
+            .child(el().w(self.palette.edge_width).fill(if p.working {
+                self.palette.edge()
+            } else {
+                Color::TRANSPARENT
+            }))
             .child(self.number(
                 line.number(old).map_or_else(String::new, |n| n.to_string()),
                 &p,
@@ -235,9 +259,9 @@ impl DiffLook {
                     .pl(3.0)
                     .items_center()
                     .child(if p.working {
-                        dot(&self.kit, 5.0)
+                        dot(self.palette.dot(), 5.0)
                     } else {
-                        el().w(5.0)
+                        el().size(5.0, 5.0)
                     })
                     .child(text(p.marker).font(self.code).color(p.ink)),
             )
@@ -258,7 +282,7 @@ impl DiffLook {
                     .min_w(0.0)
                     .pl(9.0)
                     .pr(10.0)
-                    .children(pulse.map(|opacity| super::pulse::wash(&self.kit, opacity, 0.0)))
+                    .children(wash())
                     .child(code.key("code")),
             );
         if wrap {
@@ -314,6 +338,7 @@ impl DiffLook {
                 .child(
                     text(name)
                         .font(self.kit.ty.small_medium)
+                        .motion_intent(MotionIntent::STEP | MotionIntent::CUT)
                         .color(c.text_muted),
                 )
         };
@@ -322,11 +347,16 @@ impl DiffLook {
             .h(28.0)
             .items_center()
             .fill(self.folding)
-            .child(el().w(EDGE_WIDTH))
+            .child(el().w(self.palette.edge_width))
             .child(note(old))
             .child(note(new))
             .child(el().w(MARKER_WIDTH + 9.0))
-            .child(text(label).font(self.kit.ty.mono).color(c.info.fg))
+            .child(
+                text(label)
+                    .font(self.kit.ty.mono)
+                    .color(c.info.fg)
+                    .motion_intent(MotionIntent::STEP | MotionIntent::CUT),
+            )
     }
 
     fn fold(&self, file: usize, range: Range<usize>, hidden: usize) -> El {
@@ -341,7 +371,7 @@ impl DiffLook {
             .label(&label)
             .focusable(true)
             .h(31.0)
-            .pl(CODE_INSET + 6.0)
+            .pl(code_inset(self.palette.edge_width) + 6.0)
             .items_center()
             .gap(6.0)
             .fill(self.folding)
@@ -363,7 +393,7 @@ impl DiffLook {
             .h(29.0)
             .items_center()
             .gap(8.0)
-            .pl(CODE_INSET + 9.0)
+            .pl(code_inset(self.palette.edge_width) + 9.0)
             .fill(kit.c.layer_01)
             .child(text("\\").font(kit.ty.mono).color(kit.c.warning.fg))
             .child(
@@ -416,6 +446,7 @@ fn file_header(
     filter: Filter,
     collapsed: bool,
     sticky: bool,
+    show_counts: bool,
     kit: &Kit,
 ) -> El {
     let c = &kit.c;
@@ -455,6 +486,7 @@ fn file_header(
         .child(
             text(&path)
                 .key("path")
+                .motion_intent(MotionIntent::STEP | MotionIntent::CUT)
                 .font(TextStyle {
                     size: 13.0,
                     weight: 550.0,
@@ -467,19 +499,26 @@ fn file_header(
                 .help_when_truncated(path),
         )
         .on_press_tx(move |state: &mut State, tx| state.toggle_file(index, tx));
-    let mut header = header;
+    let mut summaries = row()
+        .key("counts")
+        .items_center()
+        .gap(9.0)
+        .motion_intent(MotionIntent::STEP | MotionIntent::CUT)
+        .instant_changes();
     let mut has_summary = false;
     for layer in [Filter::Committed, Filter::Uncommitted] {
-        if (filter == Filter::All || filter == layer)
+        if show_counts
+            && (filter == Filter::All || filter == layer)
             && let Some((counts, label)) = file.summary(layer)
         {
             if has_summary {
-                header = header.child(el().size(1.0, 15.0).fill(c.border_muted));
+                summaries = summaries.child(el().size(1.0, 15.0).fill(c.border_muted));
             }
-            header = header.child(layer_summary(layer, counts, label.as_deref(), kit));
+            summaries = summaries.child(layer_summary(layer, counts, label.as_deref(), kit));
             has_summary = true;
         }
     }
+    let header = header.children(has_summary.then_some(summaries));
     if sticky {
         header.box_shadow(Shadow {
             y: 2.0,
@@ -496,7 +535,7 @@ fn layer_summary(layer: Filter, counts: &Counts, label: Option<&str>, kit: &Kit)
     let c = &kit.c;
     let mut summary = row().items_center().gap(6.0);
     if layer == Filter::Uncommitted {
-        summary = summary.child(dot(kit, 4.0));
+        summary = summary.child(dot(kit.c.info.icon, 4.0));
     }
     summary = summary.child(
         text(layer.label())

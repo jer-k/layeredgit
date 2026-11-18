@@ -96,8 +96,14 @@ pub(crate) fn edited(mut input: ReviewInput) -> ReviewInput {
         };
         if version.path == Path::new("src/lib.rs") {
             *content = content.replace(
-                "    pub fn can_retry",
-                "    /// Limits are supplied by the caller.\n    /// A limit of zero disables retrying.\n    pub fn can_retry",
+                "    /// The wait before the next attempt, give or take a fifth of it.",
+                "    /// The wait before the next attempt, with up to 20% jitter.\n    /// The wait is capped at the configured maximum.",
+            );
+        }
+        if version.path == Path::new("src/review.rs") {
+            *content = content.replace(
+                "    let worktree = read_worktree(path);",
+                "    // Include any edits made since HEAD.\n    let worktree = read_worktree(path);",
             );
         }
         if version.path == Path::new("src/generated.rs") {

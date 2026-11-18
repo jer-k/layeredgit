@@ -9,8 +9,6 @@ use crate::model::{
     fresh::{self, FreshLines},
 };
 
-const PULSE_SECONDS: f32 = 1.2;
-
 pub(crate) struct Pulse {
     lines: FreshLines,
     rows: Vec<usize>,
@@ -39,34 +37,38 @@ impl Pulse {
         files: &[Option<usize>],
         tx: &mut Tx,
     ) {
-        self.lines = if !same_comparison {
-            FreshLines::new()
+        if !same_comparison {
+            self.clear();
         } else if fresh.is_empty() {
-            fresh::relocate(std::mem::take(&mut self.lines), old, new, files)
+            self.lines = fresh::relocate(std::mem::take(&mut self.lines), old, new, files);
+            if self.lines.is_empty() {
+                self.clear();
+            }
         } else {
             self.start = tx.clock();
             self.opacity.set(1.0);
             tx.wake_after(Duration::ZERO);
-            fresh
-        };
+            self.lines = fresh;
+        }
     }
 
-    pub(super) fn poll(&mut self, now: f64, tx: &mut Tx) -> bool {
-        if self.lines.is_empty() {
-            return false;
-        }
+    pub(super) fn clear(&mut self) {
+        self.lines.clear();
+        self.rows.clear();
+        self.opacity.set(0.0);
+    }
+
+    pub(super) fn poll(&mut self, now: f64, seconds: f32, tx: &mut Tx) -> bool {
         let elapsed = now - self.start;
-        if elapsed >= f64::from(PULSE_SECONDS) {
-            self.opacity.set(0.0);
-            self.lines.clear();
-            self.rows.clear();
+        if elapsed >= f64::from(seconds) {
+            self.clear();
             tx.instant();
             return true;
         }
         // A short hold and a smooth tint fade. Opacity is the only animated
         // property, so the same pulse works under Reduce Motion.
         #[allow(clippy::cast_possible_truncation, reason = "Live opacity is an f32")]
-        let progress = ((elapsed / f64::from(PULSE_SECONDS) - 0.12) / 0.88).clamp(0.0, 1.0) as f32;
+        let progress = ((elapsed / f64::from(seconds) - 0.12) / 0.88).clamp(0.0, 1.0) as f32;
         self.opacity
             .set(1.0 - progress * progress * (3.0 - 2.0 * progress));
         tx.wake_after(Duration::ZERO);

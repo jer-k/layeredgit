@@ -4,6 +4,7 @@ mod cli;
 mod demo;
 mod input;
 mod model;
+mod palette;
 mod source;
 mod state;
 mod view;

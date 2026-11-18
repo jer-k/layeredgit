@@ -8,7 +8,10 @@ mod theme;
 use rune::{Cx, El, col, row, text};
 use rune_kit::Kit;
 
-use crate::state::{State, Status};
+use crate::{
+    palette::Palette,
+    state::{State, Status},
+};
 
 /// Height of the review toolbar and native controls.
 pub(crate) const TOOLBAR_HEIGHT: f32 = 68.0;
@@ -17,20 +20,32 @@ pub(crate) const TOOLBAR_HEIGHT: f32 = 68.0;
 pub(crate) fn review(state: &State, cx: &mut Cx<State>) -> El {
     let kit = Kit::neutral(cx.env().system_dark);
     cx.caption_color(kit.c.text_base);
+    let palette = state.palette(kit.dark);
+    let content = match &state.status {
+        Status::Loading => notice("Loading review…", None, &kit),
+        Status::Failed(error) => notice("Couldn’t load review", Some(error), &kit),
+        Status::Ready { refresh_error } => {
+            workspace(state, refresh_error.as_deref(), &kit, palette, cx)
+        }
+    };
+    #[cfg(feature = "dev")]
+    let content = state.tuning.panel(content, kit.dark);
     col()
         .key("review")
         .w_full()
         .h_full()
         .fill(kit.c.page)
         .child(chrome::toolbar(state, &kit, cx.chrome_insets()))
-        .child(match &state.status {
-            Status::Loading => notice("Loading review…", None, &kit),
-            Status::Failed(error) => notice("Couldn’t load review", Some(error), &kit),
-            Status::Ready { refresh_error } => workspace(state, refresh_error.as_deref(), &kit, cx),
-        })
+        .child(content)
 }
 
-fn workspace(state: &State, refresh_error: Option<&str>, kit: &Kit, cx: &Cx<State>) -> El {
+fn workspace(
+    state: &State,
+    refresh_error: Option<&str>,
+    kit: &Kit,
+    palette: Palette,
+    cx: &Cx<State>,
+) -> El {
     let mut pane = col()
         .key("review-pane")
         .grow(1.0)
@@ -56,17 +71,20 @@ fn workspace(state: &State, refresh_error: Option<&str>, kit: &Kit, cx: &Cx<Stat
         };
         pane.child(notice(message, None, kit))
     } else {
-        pane.child(chrome::legend(state, kit)).child(diff::pane(
+        let width = cx.layout_size("diff-scroll").map_or(0.0, |size| size[0]);
+        pane.child(chrome::legend(
             state,
             kit,
-            cx.layout_size("diff-scroll").map_or(0.0, |size| size[0]),
+            palette,
+            width > 0.0 && width < 565.0,
         ))
+        .child(diff::pane(state, kit, palette, width))
     };
     row()
         .key("workspace")
         .grow(1.0)
         .min_h(0.0)
-        .child(chrome::sidebar(state, kit))
+        .child(chrome::sidebar(state, kit, palette))
         .child(pane)
 }
 

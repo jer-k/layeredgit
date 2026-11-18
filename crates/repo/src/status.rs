@@ -1,6 +1,6 @@
 use std::{
     collections::{HashSet, hash_map::DefaultHasher},
-    fs,
+    env, fs,
     hash::{Hash, Hasher},
     io,
     os::unix::{ffi::OsStrExt, fs::MetadataExt},
@@ -90,6 +90,65 @@ impl Repo {
         Ok(git::records(&ignored, operation)?
             .map(git::path_from_bytes)
             .collect())
+    }
+
+    /// Returns the effective global ignore file, including Git's XDG default.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if Git cannot read its configuration.
+    pub fn excludes_file(&self) -> Result<Option<PathBuf>, Error> {
+        let operation = "config";
+        let output = git::run(git::command(&self.root).args([
+            operation,
+            "--null",
+            "--path",
+            "--get",
+            "core.excludesFile",
+        ]))?;
+        if output.status.code() == Some(1) && output.stderr.is_empty() {
+            return Ok(env::var_os("XDG_CONFIG_HOME")
+                .filter(|path| !path.is_empty())
+                .map(PathBuf::from)
+                .or_else(|| env::home_dir().map(|home| home.join(".config")))
+                .map(|config| config.join("git/ignore")));
+        }
+        let value = git::success(output, operation)?;
+        let value = value
+            .strip_suffix(b"\0")
+            .ok_or(Error::Protocol(operation))?;
+        Ok((!value.is_empty()).then(|| self.root.join(git::path_from_bytes(value))))
+    }
+
+    /// Finds which supplied directories contain tracked paths, including gitlinks.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an invalid path or a failed Git invocation.
+    pub fn tracked_directories(&self, directories: &[&Path]) -> Result<HashSet<PathBuf>, Error> {
+        let mut tracked = HashSet::new();
+        // ls-files takes pathspecs as arguments. Bound their combined length.
+        for chunk in directories.chunks(32) {
+            for path in chunk {
+                validate_path(path)?;
+            }
+            let operation = "ls-files";
+            let output = git::run(
+                git::command(&self.root)
+                    .args(["--literal-pathspecs", operation, "--cached", "-z", "--"])
+                    .args(chunk),
+            )?;
+            let paths = git::success(output, operation)?;
+            let candidates: HashSet<_> = chunk.iter().copied().collect();
+            for path in git::records(&paths, operation)?.map(git::path_from_bytes) {
+                tracked.extend(
+                    path.ancestors()
+                        .filter(|ancestor| candidates.contains(ancestor))
+                        .map(Path::to_owned),
+                );
+            }
+        }
+        Ok(tracked)
     }
 }
 

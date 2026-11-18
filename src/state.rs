@@ -9,12 +9,13 @@ use files::Sidebar;
 #[cfg(test)]
 mod tests;
 
-use std::{collections::HashSet, ops::Range, sync::Arc};
+use std::{cell::Cell, collections::HashSet, ops::Range, sync::Arc};
 
 use rune::{Key, KeyEvent, Tx, Waker};
 
 use crate::{
     model::{Filter, Review, ReviewRows, RowKind, fresh::Replacement},
+    palette::Palette,
     source::{Refresh, Repository},
 };
 
@@ -33,6 +34,9 @@ pub(crate) struct State {
     refresh: Option<Refresh>,
     demo_reload: Option<Replacement>,
     pub(crate) pulse: pulse::Pulse,
+    system_dark: Cell<bool>,
+    #[cfg(feature = "dev")]
+    pub(crate) tuning: crate::palette::Tuning,
     pub(crate) filter: Filter,
     pub(crate) rows: ReviewRows,
     pub(crate) rows_version: u64,
@@ -89,6 +93,9 @@ impl State {
             refresh,
             demo_reload: None,
             pulse: pulse::Pulse::default(),
+            system_dark: Cell::default(),
+            #[cfg(feature = "dev")]
+            tuning: crate::palette::Tuning::default(),
             filter,
             rows,
             rows_version: 0,
@@ -107,6 +114,15 @@ impl State {
 
     pub(crate) fn can_refresh(&self) -> bool {
         self.refresh.is_some()
+    }
+
+    /// Shares the current system appearance with the pulse timer.
+    pub(crate) fn palette(&self, dark: bool) -> Palette {
+        self.system_dark.set(dark);
+        #[cfg(feature = "dev")]
+        return self.tuning.palette(dark);
+        #[cfg(not(feature = "dev"))]
+        Palette::defaults(dark)
     }
 
     pub(crate) fn setup(&mut self, waker: Waker) {
@@ -134,7 +150,10 @@ impl State {
 
     pub(crate) fn poll(&mut self, now: f64, tx: &mut Tx) -> bool {
         self.reveal_sidebar(tx);
-        let pulse_ended = self.pulse.poll(now, tx);
+        let pulse_ended = self.pulse.files().next().is_some() && {
+            let seconds = self.palette(self.system_dark.get()).pulse_seconds;
+            self.pulse.poll(now, seconds, tx)
+        };
         if self.demo_reload.is_some() {
             if now < 0.5 {
                 tx.wake_at(0.5);
@@ -175,8 +194,14 @@ impl State {
             self.select_file(self.rows.files.first().copied());
             return;
         }
-        self.pulse
-            .reload(fresh, same_comparison, &old, &self.review, &files, tx);
+        self.pulse.reload(
+            fresh,
+            same_comparison && self.filter != Filter::Committed,
+            &old,
+            &self.review,
+            &files,
+            tx,
+        );
         let mapped = |index: usize| files.get(index).copied().flatten();
         let top = self.rows.rows.get(self.visible_rows.start);
         self.collapsed = self.collapsed.iter().copied().filter_map(mapped).collect();
@@ -214,7 +239,8 @@ impl State {
             self.sticky_file = None;
         }
         self.select_file(target);
-        self.set_rows(rows, tx);
+        self.set_rows(rows);
+        tx.instant();
     }
 
     fn show_error(&mut self, message: String) -> bool {
@@ -246,22 +272,21 @@ impl State {
             .active_file
             .filter(|&file| rows.header(file).is_some())
             .or_else(|| rows.files.first().copied());
-        let anchor = self
-            .rows
-            .rows
-            .get(self.visible_rows.start)
-            .filter(|row| target == Some(row.file))
-            .and_then(|row| {
-                let range = rows.file_rows_range(row.file)?;
-                rows.rows
-                    .get(range)?
-                    .iter()
-                    .find(|candidate| candidate.key == row.key)
+        // A file already aligned to the top stays there as the files above it
+        // change height. Within a file, hold the first line both filters show.
+        let anchor = target
+            .filter(|&file| {
+                !self
+                    .rows
+                    .rows
+                    .get(self.visible_rows.start)
+                    .is_some_and(|row| row.file == file && matches!(row.kind, RowKind::Header))
             })
-            .map(|row| row.key.clone());
+            .and_then(|file| self.filter_anchor(&rows, file));
+        self.pulse.clear();
         self.filter = filter;
         self.sidebar.rebuild(&self.review, filter);
-        self.set_rows(rows, tx);
+        self.set_rows(rows);
         tx.animated();
         tx.motion(rune::tok::motion::REFLOW);
         self.select_file(target);
@@ -274,6 +299,21 @@ impl State {
             self.sticky_file = None;
             self.visible_rows = 0..0;
         }
+    }
+
+    fn filter_anchor(&self, rows: &ReviewRows, file: usize) -> Option<String> {
+        let next: HashSet<_> = rows
+            .rows
+            .get(rows.file_rows_range(file)?)?
+            .iter()
+            .map(|row| row.key.as_str())
+            .collect();
+        self.rows
+            .rows
+            .get(self.visible_rows.clone())?
+            .iter()
+            .find(|row| row.file == file && next.contains(row.key.as_str()))
+            .map(|row| row.key.clone())
     }
 
     pub(crate) fn expand(&mut self, file: usize, range: Range<usize>, tx: &mut Tx) {
@@ -380,6 +420,10 @@ impl State {
     }
 
     pub(crate) fn key(&mut self, event: &KeyEvent, tx: &mut Tx) -> bool {
+        #[cfg(feature = "dev")]
+        if self.tuning.key(event, self.system_dark.get(), tx) {
+            return true;
+        }
         if event.mods.cmd || event.mods.ctrl || event.mods.alt {
             return false;
         }
@@ -451,15 +495,15 @@ impl State {
 
     fn rebuild_rows(&mut self, tx: &mut Tx) {
         let rows = ReviewRows::new(&self.review, self.filter, &self.collapsed, &self.expanded);
-        self.set_rows(rows, tx);
+        self.set_rows(rows);
+        tx.instant();
     }
 
-    fn set_rows(&mut self, rows: ReviewRows, tx: &mut Tx) {
+    fn set_rows(&mut self, rows: ReviewRows) {
         self.rows = rows;
         self.pulse.project(&self.rows, &self.review, self.filter);
         self.rows_version = self.rows_version.wrapping_add(1);
         self.navigation = None;
-        tx.instant();
     }
 
     pub(crate) fn pulse_offscreen(&self) -> (usize, usize) {

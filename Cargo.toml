@@ -51,4 +51,4 @@ accesskit_macos = { git = "https://github.com/anomalyco/rune", rev = "10a39584cc
 tempfile = "3.27.0"
 
 [features]
-rune-knobs = ["dep:rune-knobs"]
+dev = ["rune-knobs/panel"]
