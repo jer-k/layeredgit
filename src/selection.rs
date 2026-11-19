@@ -415,7 +415,8 @@ impl State {
     }
 }
 
-fn write_copy(content: String, tx: &mut Tx) {
+/// Copies text from the diff, with a clipboard trace for headless scripts.
+pub(crate) fn write_copy(content: String, tx: &mut Tx) {
     // Headless scripts can't read the system clipboard. Trace the exact write they request.
     if cfg!(debug_assertions)
         && tx.tracing()

@@ -6,12 +6,12 @@ use rune::{
     Color, Cursor, El, GrowthSpec, Live, MotionIntent, ScrollSpec, Shadow, TextStyle, Transition,
     col, el, icon, memo, region_with, rich, row, text,
 };
-use rune_kit::{Kit, syntax::SyntaxTheme};
+use rune_kit::{IconButton, IconButtonVariant, Kit, syntax::SyntaxTheme};
 
 use crate::{
     model::{Counts, FileBody, FileDiff, Filter, Line, RowKind},
     palette::Palette,
-    selection::{CodeStyle, DiffSelection, SCROLL_KEY},
+    selection::{CodeStyle, DiffSelection, SCROLL_KEY, write_copy},
     state::{HEADER_HEIGHT, State},
 };
 
@@ -552,7 +552,15 @@ fn file_header(
         kit.glyph.chevron_down
     };
     let r = kit.radius.lg;
-    let header = row()
+    let corners = if collapsed {
+        [r; 4]
+    } else if sticky {
+        [0.0; 4]
+    } else {
+        [r, r, 0.0, 0.0]
+    };
+    let toggle = row()
+        .key("toggle")
         .role("button")
         .label(if collapsed {
             format!("Expand {path}")
@@ -561,19 +569,12 @@ fn file_header(
         })
         .expanded(!collapsed)
         .focusable(true)
-        .h(HEADER_HEIGHT)
-        .px(13.0)
+        .shrink()
+        .h(28.0)
+        .px(5.0)
         .gap(9.0)
         .items_center()
-        .fill(c.layer_01)
-        .corners(if collapsed {
-            [r; 4]
-        } else if sticky {
-            [0.0; 4]
-        } else {
-            [r, r, 0.0, 0.0]
-        })
-        .border(1.0, c.border_muted)
+        .radius(kit.radius.sm)
         .hover(c.hover)
         .press(c.pressed)
         .cursor(Cursor::Pointer)
@@ -588,32 +589,38 @@ fn file_header(
                     ..kit.ty.mono
                 })
                 .color(c.text_base)
-                .grow(1.0)
-                .min_w(0.0)
+                .shrink()
                 .truncate_middle()
                 .help_when_truncated(path),
         )
         .on_press_tx(move |state: &mut State, tx| state.toggle_file(index, tx));
-    let mut summaries = row()
-        .key("counts")
+    let copy_path = file.display_path(filter).to_string_lossy().into_owned();
+    let copy = IconButton::new(kit.glyph.copy)
+        .variant(IconButtonVariant::GhostMuted)
+        .label(format!("Copy path for {copy_path}"))
+        .help("Copy file path")
+        .on_press_tx(move |_: &mut State, tx| {
+            write_copy(copy_path.clone(), tx);
+            tx.live_only();
+        })
+        .build(kit)
+        .key("copy-path");
+    let header = row()
+        .h(HEADER_HEIGHT)
+        .pl(8.0)
+        .pr(13.0)
         .items_center()
-        .gap(9.0)
-        .motion_intent(MotionIntent::STEP | MotionIntent::CUT)
-        .instant_changes();
-    let mut has_summary = false;
-    for layer in [Filter::Committed, Filter::Uncommitted] {
-        if show_counts
-            && (filter == Filter::All || filter == layer)
-            && let Some((counts, label)) = file.summary(layer)
-        {
-            if has_summary {
-                summaries = summaries.child(el().size(1.0, 15.0).fill(c.border_muted));
-            }
-            summaries = summaries.child(layer_summary(layer, counts, label.as_deref(), kit));
-            has_summary = true;
-        }
-    }
-    let header = header.children(has_summary.then_some(summaries));
+        .fill(c.layer_01)
+        .corners(corners)
+        .border(1.0, c.border_muted)
+        .hover(c.hover)
+        .press(c.pressed)
+        .cursor(Cursor::Pointer)
+        .child(toggle)
+        .child(copy)
+        .child(el().grow(1.0))
+        .children(show_counts.then(|| file_summaries(file, filter, kit)))
+        .on_background_press_tx(move |state: &mut State, tx| state.toggle_file(index, tx));
     if sticky {
         header.box_shadow(Shadow {
             y: 2.0,
@@ -624,6 +631,28 @@ fn file_header(
     } else {
         header
     }
+}
+
+fn file_summaries(file: &FileDiff, filter: Filter, kit: &Kit) -> El {
+    let mut summaries = row()
+        .key("counts")
+        .items_center()
+        .gap(9.0)
+        .motion_intent(MotionIntent::STEP | MotionIntent::CUT)
+        .instant_changes();
+    let mut has_summary = false;
+    for layer in [Filter::Committed, Filter::Uncommitted] {
+        if (filter == Filter::All || filter == layer)
+            && let Some((counts, label)) = file.summary(layer)
+        {
+            if has_summary {
+                summaries = summaries.child(el().size(1.0, 15.0).fill(kit.c.border_muted));
+            }
+            summaries = summaries.child(layer_summary(layer, counts, label.as_deref(), kit));
+            has_summary = true;
+        }
+    }
+    summaries
 }
 
 fn layer_summary(layer: Filter, counts: &Counts, label: Option<&str>, kit: &Kit) -> El {
