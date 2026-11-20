@@ -248,8 +248,7 @@ impl State {
             same_comparison,
         } = update;
         let old = std::mem::replace(&mut self.review, review);
-        let changing = matches!(self.status, Status::Changing);
-        let loaded = matches!(self.status, Status::Ready { .. }) || changing;
+        let loaded = matches!(self.status, Status::Ready { .. } | Status::Changing);
         self.status = ready();
         self.title(tx);
         self.review_version = self.review_version.wrapping_add(1);
@@ -277,7 +276,7 @@ impl State {
             .and_then(mapped)
             .filter(|&file| rows.header(file).is_some())
             .or_else(|| rows.files.first().copied());
-        if let Some(file) = target {
+        let anchor = target.and_then(|file| {
             let row = top
                 .filter(|row| mapped(row.file) == Some(file))
                 .and_then(|row| {
@@ -285,26 +284,28 @@ impl State {
                     let after = self.review.files.get(file)?;
                     restore::scroll_row(&rows, file, row, before, after)
                 });
-            if let Some((index, after)) = row.or_else(|| {
+            row.or_else(|| {
                 let index = rows.header(file)?;
                 rows.rows.get(index).map(|row| (index, row))
-            }) {
-                if !changing && row.is_some() && top.is_some_and(|before| before.key == after.key) {
-                    tx.keep_on_screen(&after.key);
-                } else {
-                    tx.scroll_key_to(&after.key, 0.0);
-                }
-                self.visible_rows = index..index;
-                self.sticky_file = (!matches!(after.kind, RowKind::Header | RowKind::Space)
-                    && !self.collapsed.contains(&file))
-                .then_some(file);
-            }
+            })
+        });
+        let anchor_index = if let Some((index, row)) = anchor {
+            self.visible_rows = index..index;
+            self.sticky_file = (!matches!(row.kind, RowKind::Header | RowKind::Space)
+                && !self.collapsed.contains(&row.file))
+            .then_some(row.file);
+            Some(index)
         } else {
             self.visible_rows = 0..0;
             self.sticky_file = None;
-        }
+            None
+        };
         self.select_file(target);
         self.set_rows(rows);
+        if let Some(index) = anchor_index {
+            // Keep the file selected if the jump is clamped at the end of the diff.
+            self.jump_to_row(index, 0.0, tx);
+        }
         tx.instant();
     }
 

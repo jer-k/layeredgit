@@ -175,6 +175,59 @@ fn refresh_keeps_filter_selection_expanded_fold_and_top_line_after_rename() {
 }
 
 #[test]
+fn refresh_keeps_a_short_selected_file_in_view_at_the_end() {
+    let review = |lines| {
+        let mut content = String::new();
+        for line in 0..lines {
+            let _ = writeln!(content, "new line {line}");
+        }
+        Review::new(ReviewInput {
+            base_revision: [None, None],
+            base_label: "main".into(),
+            head_label: "feature".into(),
+            files: vec![
+                file("first.txt", "first.txt", ["old\n", &content, &content]),
+                file("last.txt", "last.txt", ["old\n", "new\n", "new\n"]),
+            ],
+        })
+    };
+    let state = State::new(review(80), ready(), None);
+    let mut runtime = rune::Runtime::new(
+        state,
+        crate::view::review,
+        (1240.0, 820.0),
+        rune::Env::new(true, 1.0),
+    );
+    runtime.poll = Some(State::poll);
+    runtime.frame(0.0);
+    runtime.update(|state, tx| state.jump_to_file(1, tx));
+    let settle = |runtime: &mut rune::Runtime<State>| {
+        for _ in 0..24 {
+            runtime.frame(1.0 / 60.0);
+        }
+    };
+    settle(&mut runtime);
+    assert_eq!(runtime.state.active_file, Some(1));
+    assert_eq!(
+        runtime.state.rows.rows[runtime.state.visible_rows.start].file,
+        0
+    );
+
+    for lines in [96, 180] {
+        runtime.state.demo_reload = Some(Replacement::new(review(lines), &runtime.state.review));
+        settle(&mut runtime);
+        assert!(runtime.state.demo_reload.is_none());
+        assert!(
+            runtime.elements().iter().any(|element| {
+                element.key.as_deref() == Some("header/1") && element.visible[3] > 0.0
+            }),
+            "last.txt should remain visible after the first diff grows to {lines} lines"
+        );
+    }
+    assert_eq!(runtime.state.active_file, Some(1));
+}
+
+#[test]
 fn filesystem_refresh_reloads_dirty_fixture_and_restores_state() {
     let (_directory, repository) = crate::source::tests::fixture();
     let mut state = State::open(Some(repository.clone()), false, false);
