@@ -1,0 +1,11 @@
+{
+  "events": [
+    {"t": 0.1, "type": "mark", "name": "diff"},
+    {"t": 0.2, "type": "key", "name": "t", "cmd": true},
+    {"t": 0.8, "type": "mark", "name": "focused"},
+    {"t": 1.0, "type": "type", "text": "printf 'layeredgit Cmd+T\\n'; stty size"},
+    {"t": 2.7, "type": "key", "name": "Enter"},
+    {"t": 3.2, "type": "key", "name": "t", "cmd": true},
+    {"t": 3.6, "type": "mark", "name": "still-open"}
+  ]
+}

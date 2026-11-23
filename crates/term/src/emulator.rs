@@ -1,7 +1,7 @@
 use ghostty_vt::{
     Terminal, TerminalOptions, focus, key, paste, snapshot,
     style::{Palette, RgbColor},
-    terminal::{ColorScheme, Event, Mode, ScrollViewport},
+    terminal::{ColorScheme, Event, Mode, ScrollViewport, Scrollbar},
 };
 
 use crate::{Screen, Size, Source, VtError, screen::Renderer};
@@ -115,14 +115,30 @@ impl Emulator {
         )
     }
 
-    /// Scrolls the viewport by rows, negative toward history.
-    pub fn scroll(&mut self, rows: isize) {
-        self.terminal.scroll_viewport(ScrollViewport::Delta(rows));
+    /// Scrolls to a row offset from the top of scrollback, clamped to the active screen.
+    pub fn scroll_to_row(&mut self, row: usize) {
+        self.terminal.scroll_viewport(ScrollViewport::Row(row));
     }
 
     /// Returns to the active screen for keyboard input.
     pub fn scroll_to_bottom(&mut self) {
         self.terminal.scroll_viewport(ScrollViewport::Bottom);
+    }
+
+    /// Returns the raw viewport position, height and total number of scrollable rows.
+    ///
+    /// # Errors
+    /// Returns Ghostty's error if it cannot read the scroll state.
+    pub fn scrollbar(&self) -> Result<Scrollbar, VtError> {
+        self.terminal.scrollbar()
+    }
+
+    /// Returns the cursor's row within the active screen, including when the cursor is hidden.
+    ///
+    /// # Errors
+    /// Returns Ghostty's error if it cannot read the cursor position.
+    pub fn cursor_row(&self) -> Result<u16, VtError> {
+        self.terminal.cursor_y()
     }
 
     /// Encodes a key using the running program's active keyboard modes.

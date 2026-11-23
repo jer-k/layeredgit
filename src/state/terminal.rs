@@ -1,4 +1,5 @@
 use std::{
+    ops::Range,
     path::PathBuf,
     sync::{
         atomic::{AtomicU64, Ordering},
@@ -16,11 +17,15 @@ use term::{Emulator, LocalPty, RexPty, RgbColor, Screen, Size, Source, SourceEve
 use super::State;
 
 mod keys;
+mod viewport;
+
+use viewport::{Grid, Viewport};
 
 pub(crate) const SCREEN_KEY: &str = "terminal-screen";
 pub(crate) const CELL_HEIGHT: f32 = 20.0;
 pub(crate) const CELL_WIDTH: f32 = 7.25;
 const TOGGLE: rune::Chord = rune::Chord::new(rune::ChordKey::Char('`')).with(rune::ChordMod::Ctrl);
+const OPEN: rune::Chord = rune::Chord::new(rune::ChordKey::Char('t')).with(rune::ChordMod::Super);
 static NEXT_EMULATOR: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Default)]
@@ -36,6 +41,7 @@ pub(crate) struct TerminalPane {
     status: Status,
     notice: Option<String>,
     wheel_remainder: f32,
+    viewport: Viewport,
 }
 
 #[derive(Default)]
@@ -84,6 +90,29 @@ impl Session {
     fn follows_remote_size(&self) -> bool {
         matches!(self.backend, Backend::Rex(_))
     }
+
+    fn viewport_grid(&self) -> Result<Grid, term::VtError> {
+        let scrollbar = self.emulator.scrollbar()?;
+        let row_count = |rows| usize::try_from(rows).unwrap_or(usize::MAX);
+        Ok(Grid {
+            rows: row_count(scrollbar.len),
+            offset: row_count(scrollbar.offset),
+            history: row_count(scrollbar.total.saturating_sub(scrollbar.len)),
+            cursor: usize::from(self.emulator.cursor_row()?),
+        })
+    }
+
+    fn report_focus(&self, focused: bool) {
+        match &self.source {
+            Some(Transport::Rex(source)) => source.focus(focused),
+            Some(Transport::Local(source)) => {
+                if let Ok(bytes) = self.emulator.encode_focus(focused) {
+                    source.write(bytes);
+                }
+            }
+            None => {}
+        }
+    }
 }
 
 impl TerminalPane {
@@ -119,12 +148,28 @@ impl TerminalPane {
             .map(|session| session.emulator.screen())
     }
 
+    pub(crate) fn visible_rows(&self) -> Range<usize> {
+        self.viewport.visible(
+            self.screen().map_or(0, |screen| screen.rows.len()),
+            self.pane_rows(),
+        )
+    }
+
+    pub(crate) fn columns(&self) -> u16 {
+        self.geometry.map_or(0, |(size, _)| size.cols)
+    }
+
+    fn pane_rows(&self) -> usize {
+        self.geometry.map_or(0, |(size, _)| usize::from(size.rows))
+    }
+
     fn start(&mut self, cwd: PathBuf, waker: Waker) {
         let Some((size, dark)) = self.geometry else {
             return;
         };
         self.id = NEXT_EMULATOR.fetch_add(1, Ordering::Relaxed);
         self.wheel_remainder = 0.0;
+        self.viewport = Viewport::default();
         self.preedit.clear();
         self.status = Status::Starting;
         self.notice = None;
@@ -145,6 +190,9 @@ impl TerminalPane {
         match result {
             Ok(session) => {
                 let use_local = session.source.is_none();
+                if self.focused {
+                    session.report_focus(true);
+                }
                 self.session = Some(session);
                 if use_local {
                     self.start_local();
@@ -180,10 +228,18 @@ impl TerminalPane {
     }
 
     fn refresh_screen(&mut self) -> bool {
+        let pane_rows = self.pane_rows();
         let Some(session) = &mut self.session else {
             return false;
         };
-        match session.emulator.update() {
+        let result = (|| {
+            let first = self.viewport.first;
+            if let Some(offset) = self.viewport.layout(&session.viewport_grid()?, pane_rows) {
+                session.emulator.scroll_to_row(offset);
+            }
+            Ok::<_, term::VtError>(session.emulator.update()? || first != self.viewport.first)
+        })();
+        match result {
             Ok(false) => false,
             Ok(true) => {
                 self.version = self.version.wrapping_add(1);
@@ -223,7 +279,7 @@ impl TerminalPane {
             self.fail(&error.to_string());
             return true;
         }
-        self.refresh_screen()
+        self.refresh_screen() || previous.is_none_or(|(previous, _)| previous != size)
     }
 
     fn poll_output(&mut self, tx: &mut Tx) -> bool {
@@ -326,11 +382,8 @@ impl TerminalPane {
             return false;
         }
         self.preedit.clear();
-        if let Some(session) = &self.session
-            && let Some(source) = &session.source
-            && let Ok(bytes) = session.emulator.encode_focus(focused)
-        {
-            source.source().write(bytes);
+        if let Some(session) = &self.session {
+            session.report_focus(focused);
         }
         true
     }
@@ -349,6 +402,7 @@ impl TerminalPane {
             Ok(bytes) if bytes.is_empty() => false,
             Ok(bytes) => {
                 source.source().write(bytes);
+                self.viewport.follow();
                 session.emulator.scroll_to_bottom();
                 self.refresh_screen()
             }
@@ -367,6 +421,14 @@ impl State {
                 self.toggle_terminal(tx);
             }
             true
+        } else if OPEN.matches_tx(event, tx)
+            && (!self.terminal.open || tx.focused() != Some(SCREEN_KEY))
+            && let Some((cwd, waker)) = self.terminal_target()
+        {
+            if !tx.key_repeat() {
+                self.show_terminal(cwd, waker, tx);
+            }
+            true
         } else {
             false
         }
@@ -380,6 +442,10 @@ impl State {
         let Some((cwd, waker)) = self.terminal_target() else {
             return;
         };
+        self.show_terminal(cwd, waker, tx);
+    }
+
+    fn show_terminal(&mut self, cwd: PathBuf, waker: Waker, tx: &mut Tx) {
         self.terminal.open = true;
         if self.terminal.session.is_none() || self.terminal.ended() {
             self.terminal.start(cwd, waker);
@@ -427,8 +493,7 @@ impl State {
         if self.terminal_shortcut(event, tx) {
             return true;
         }
-        // Command shortcuts still belong to the application.
-        if event.mods.logo || (event.mods.cmd && !event.mods.ctrl) {
+        if keys::super_held(event) && !OPEN.matches_tx(event, tx) {
             return false;
         }
         let action = if tx.key_repeat() {
@@ -446,7 +511,10 @@ impl State {
     }
 
     pub(crate) fn terminal_key_up(&mut self, event: &KeyEvent, tx: &mut Tx) -> bool {
-        if tx.focused() != Some(SCREEN_KEY) || event.mods.logo || TOGGLE.matches_tx(event, tx) {
+        if tx.focused() != Some(SCREEN_KEY)
+            || (keys::super_held(event) && !OPEN.matches_tx(event, tx))
+            || TOGGLE.matches_tx(event, tx)
+        {
             return false;
         }
         if !self
@@ -502,6 +570,7 @@ impl State {
     }
 
     pub(crate) fn terminal_scroll(&mut self, dy: f32, tx: &mut Tx) -> bool {
+        let pane_rows = self.terminal.pane_rows();
         if let Some(session) = &mut self.terminal.session {
             self.terminal.wheel_remainder += dy / CELL_HEIGHT;
             #[expect(
@@ -511,7 +580,20 @@ impl State {
             let rows = self.terminal.wheel_remainder.trunc().clamp(-1000.0, 1000.0) as i16;
             if rows != 0 {
                 self.terminal.wheel_remainder -= f32::from(rows);
-                session.emulator.scroll(isize::from(rows));
+                let grid = match session.viewport_grid() {
+                    Ok(grid) => grid,
+                    Err(error) => {
+                        self.terminal.fail(&error.to_string());
+                        return true;
+                    }
+                };
+                if let Some(offset) =
+                    self.terminal
+                        .viewport
+                        .scroll(&grid, pane_rows, isize::from(rows))
+                {
+                    session.emulator.scroll_to_row(offset);
+                }
                 if self.terminal.refresh_screen() {
                     return true;
                 }

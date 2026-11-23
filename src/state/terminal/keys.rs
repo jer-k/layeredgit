@@ -11,11 +11,12 @@ pub(super) fn encode(
     action: Action,
 ) -> Result<Vec<u8>, VtError> {
     let modifiers = event.mods;
+    let super_held = super_held(event);
     let mut mods = Mods::empty();
     mods.set(Mods::SHIFT, modifiers.shift);
     mods.set(Mods::CTRL, modifiers.ctrl);
     mods.set(Mods::ALT, modifiers.alt);
-    mods.set(Mods::SUPER, modifiers.logo);
+    mods.set(Mods::SUPER, super_held);
     let mut consumed = Mods::empty();
     let mut base = tx.key_base();
     let mut text = None;
@@ -23,7 +24,7 @@ pub(super) fn encode(
         Key::Text(value) => {
             let character = value.chars().next().filter(|_| value.chars().count() == 1);
             base = base.or_else(|| character.map(unshift));
-            if !modifiers.ctrl && !modifiers.logo && action != Action::Release {
+            if !modifiers.ctrl && !super_held && action != Action::Release {
                 text = Some(value.as_str());
                 consumed.set(Mods::SHIFT, modifiers.shift);
                 // On macOS Option keeps the character produced by the keyboard layout.
@@ -57,6 +58,10 @@ pub(super) fn encode(
     emulator.encode_key(key, action, mods, consumed, base, text)
 }
 
+pub(super) fn super_held(event: &KeyEvent) -> bool {
+    event.mods.logo || (event.mods.cmd && !event.mods.ctrl)
+}
+
 fn unshift(value: char) -> char {
     const SHIFTED: &str = "~!@#$%^&*()_+{}|:\"<>?";
     const UNMODIFIED: &str = "`1234567890-=[]\\;',./";
@@ -85,5 +90,41 @@ fn printable(value: char) -> VtKey {
         '/' => VtKey::Slash,
         ' ' => VtKey::Space,
         _ => VtKey::Unidentified,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use term::Size;
+
+    #[test]
+    fn cmd_t_encodes_super_in_kitty_mode() -> Result<(), VtError> {
+        let mut emulator = Emulator::new(Size {
+            cols: 80,
+            rows: 11,
+            cell_width: 8,
+            cell_height: 20,
+        })?;
+        let event = KeyEvent {
+            key: Key::Command('t'),
+            mods: rune::Mods {
+                cmd: true,
+                logo: true,
+                ..rune::Mods::default()
+            },
+        };
+        let tx = Tx::default();
+        assert_eq!(encode(&mut emulator, &event, &tx, Action::Press)?, b"");
+        emulator.feed(b"\x1b[>3u");
+        assert_eq!(
+            encode(&mut emulator, &event, &tx, Action::Press)?,
+            b"\x1b[116;9u"
+        );
+        assert_eq!(
+            encode(&mut emulator, &event, &tx, Action::Release)?,
+            b"\x1b[116;9:3u"
+        );
+        Ok(())
     }
 }

@@ -1,4 +1,4 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, ops::Range};
 
 use rune::{Color, El, GrowthSpec, ScrollSpec, TextStyle, col, color, el, memo, row, text};
 use rune_kit::{Button, ButtonVariant, ControlSize, IconButton, IconButtonVariant, Kit};
@@ -32,7 +32,7 @@ pub(super) fn toggle(state: &State, kit: &Kit) -> El {
         .build(kit)
         .key("terminal-toggle")
         .label(action)
-        .help(format!("{action} (Ctrl+`)"))
+        .help(format!("{action} (Ctrl+`). Open or focus with Cmd+T."))
 }
 
 pub(super) fn pane(state: &State, kit: &Kit, scale: f32) -> El {
@@ -55,6 +55,8 @@ pub(super) fn pane(state: &State, kit: &Kit, scale: f32) -> El {
         font,
     };
     let dark = kit.dark;
+    let visible_rows = pane.visible_rows();
+    let columns = pane.columns();
     let canvas = col()
         .key(SCREEN_KEY)
         .role("group")
@@ -94,7 +96,7 @@ pub(super) fn pane(state: &State, kit: &Kit, scale: f32) -> El {
                         .w_full()
                         .growth(GrowthSpec::default())
                         .virtual_rows(
-                            screen.map_or(0, |screen| screen.rows.len()),
+                            visible_rows.len(),
                             CELL_HEIGHT,
                             |state: &State, index| {
                                 terminal_row(state, index)
@@ -106,8 +108,8 @@ pub(super) fn pane(state: &State, kit: &Kit, scale: f32) -> El {
                                     |row| {
                                         memo(
                                             &row.key,
-                                            (state.terminal.id, row.revision, look),
-                                            || look.draw_row(row),
+                                            (state.terminal.id, row.revision, look, columns),
+                                            || look.draw_row(row, columns),
                                         )
                                     },
                                 )
@@ -116,15 +118,7 @@ pub(super) fn pane(state: &State, kit: &Kit, scale: f32) -> El {
                         .virtual_rows_version((pane.id, pane.version)),
                 ),
         )
-        .children(screen.and_then(|screen| {
-            let cursor = screen.cursor.filter(|_| !pane.ended())?;
-            let width = terminal_row(state, usize::from(cursor.row))
-                .and_then(|row| row.cells.iter().find(|cell| cell.column == cursor.column))
-                .map_or(1.0, |cell| f32::from(cell.width))
-                * CELL_WIDTH;
-            let ink = screen.cursor_color.map_or(fg, color_from_rgb);
-            Some(draw_cursor(state, cursor, width, ink, look))
-        }));
+        .children(viewport_cursor(state, visible_rows, columns, look));
     col()
         .key("terminal-pane")
         .instant_changes()
@@ -194,10 +188,13 @@ struct RowStyle {
 }
 
 impl RowStyle {
-    fn draw_row(self, row: &Row) -> El {
-        el().w_full()
-            .h(CELL_HEIGHT)
-            .children(row.cells.iter().map(|cell| self.draw_cell(cell)))
+    fn draw_row(self, row: &Row, columns: u16) -> El {
+        el().w_full().h(CELL_HEIGHT).children(
+            row.cells
+                .iter()
+                .take_while(|cell| cell.column < columns)
+                .map(|cell| self.draw_cell(cell)),
+        )
     }
 
     fn draw_cell(self, cell: &Cell) -> El {
@@ -234,6 +231,22 @@ impl RowStyle {
         }
         item.children(glyph).children(underline).children(strike)
     }
+}
+
+fn viewport_cursor(state: &State, rows: Range<usize>, columns: u16, look: RowStyle) -> Option<El> {
+    let screen = state.terminal.screen()?;
+    let mut cursor = screen.cursor.filter(|_| !state.terminal.ended())?;
+    let row = usize::from(cursor.row);
+    if !rows.contains(&row) || cursor.column >= columns {
+        return None;
+    }
+    cursor.row = u16::try_from(row - rows.start).ok()?;
+    let width = terminal_row(state, usize::from(cursor.row))
+        .and_then(|row| row.cells.iter().find(|cell| cell.column == cursor.column))
+        .map_or(1.0, |cell| f32::from(cell.width))
+        * CELL_WIDTH;
+    let ink = screen.cursor_color.map_or(look.foreground, color_from_rgb);
+    Some(draw_cursor(state, cursor, width, ink, look))
 }
 
 fn draw_cursor(state: &State, cursor: term::Cursor, width: f32, ink: Color, look: RowStyle) -> El {
@@ -275,7 +288,9 @@ fn draw_cursor(state: &State, cursor: term::Cursor, width: f32, ink: Color, look
 }
 
 fn terminal_row(state: &State, index: usize) -> Option<&Row> {
-    state.terminal.screen()?.rows.get(index)?.as_deref()
+    let pane = &state.terminal;
+    let screen = pane.screen()?;
+    screen.rows.get(pane.visible_rows())?.get(index)?.as_deref()
 }
 
 fn color_from_rgb(rgb: RgbColor) -> Color {

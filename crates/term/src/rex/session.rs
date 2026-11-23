@@ -205,6 +205,30 @@ impl Target {
         )
     }
 
+    pub(super) fn take_ownership(&self, control: &mut Control) -> io::Result<()> {
+        control.call::<Value>(
+            "session.own_block",
+            &json!({
+                "session_id": self.session_id,
+                "block_ids": [self.block_id],
+                "mode": "take",
+            }),
+        )?;
+        Ok(())
+    }
+
+    pub(super) fn focus_event(&self, control: &mut Control, focused: bool) -> io::Result<()> {
+        control.call::<Value>(
+            "block.event",
+            &json!({
+                "session_id": self.session_id,
+                "block_id": self.block_id,
+                "event": {"type": "focus", "payload": {"action": if focused { "in" } else { "out" }}},
+            }),
+        )?;
+        Ok(())
+    }
+
     pub(super) fn show_in_rex(&self, control: &mut Control) -> io::Result<()> {
         // Opening an already running Rex.app brings it forward. If it was closed, wait
         // briefly for it to register its client actions.

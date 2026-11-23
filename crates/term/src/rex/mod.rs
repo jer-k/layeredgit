@@ -43,6 +43,7 @@ pub struct RexPty {
 enum Command {
     Write(Vec<u8>),
     Resize(Size),
+    Focus(bool),
     ShowInRex,
 }
 
@@ -77,6 +78,11 @@ impl RexPty {
     /// Queues an action to bring Rex.app forward and display the attached window.
     pub fn open_in_rex(&self) {
         let _ = self.commands.send(Command::ShowInRex);
+    }
+
+    /// Reports pane focus and claims the terminal's size when focus is gained.
+    pub fn focus(&self, focused: bool) {
+        let _ = self.commands.send(Command::Focus(focused));
     }
 }
 
@@ -168,6 +174,9 @@ fn run_command(
     match command {
         Command::Write(bytes) => match std::str::from_utf8(&bytes) {
             Ok(mut text) => {
+                // A second client can take ownership while our pane still has focus.
+                // Rex applies our last requested size on take, so no resize is needed here.
+                target.take_ownership(control)?;
                 // Leave room for the control envelope and JSON escaping of input.
                 while !text.is_empty() {
                     let (part, rest) = text.split_at(text.floor_char_boundary(64 * 1024));
@@ -191,6 +200,12 @@ fn run_command(
                 "com.superlogical.terminal.resize",
                 &size_args(size),
             )?;
+        }
+        Command::Focus(focused) => {
+            if focused {
+                target.take_ownership(control)?;
+            }
+            target.focus_event(control, focused)?;
         }
         Command::ShowInRex => {
             if let Err(error) = target.show_in_rex(control) {
