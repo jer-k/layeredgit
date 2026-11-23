@@ -138,4 +138,6 @@ fn window(size: (f32, f32)) -> App<State> {
     .titlebar(Titlebar::new(view::TOOLBAR_HEIGHT))
     .tab_visits_controls(true)
     .on_visibility(State::visibility)
+    .on_focus(State::terminal_window_focus)
+    .on_ime(State::terminal_ime)
 }

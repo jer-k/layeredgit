@@ -308,6 +308,8 @@ impl State {
         next.rows_version = self.rows_version.wrapping_add(1);
         next.review_version = self.review_version.wrapping_add(1);
         next.headless_reduced_motion = self.headless_reduced_motion;
+        next.terminal.window_blurred = self.terminal.window_blurred;
+        self.terminal.set_focus(false);
         std::mem::swap(&mut next.panels, &mut self.panels);
         next.panels.cancel_drag();
         #[cfg(feature = "dev")]

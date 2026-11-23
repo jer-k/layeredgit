@@ -6,6 +6,7 @@ mod panels;
 mod pulse;
 mod repositories;
 mod revisions;
+mod terminal;
 mod theme;
 
 use rune::{Cx, El, col, row, text};
@@ -111,8 +112,19 @@ pub(crate) fn review(state: &State, cx: &mut Cx<State>) -> El {
         .h_full()
         .fill(kit.c.page)
         .child(toolbar)
-        .child(body);
-    rune_kit::root(body, layer)
+        .child(body)
+        .children(
+            state
+                .terminal
+                .open
+                .then(|| terminal::pane(state, &kit, cx.env().scale)),
+        );
+    let root = rune_kit::root(body, layer);
+    if state.terminal.open {
+        root.on_paste(State::terminal_paste)
+    } else {
+        root
+    }
 }
 
 fn alert(key: &'static str, error: &str, kit: &Kit) -> El {

@@ -122,6 +122,13 @@ pub(super) fn toolbar(state: &State, kit: &Kit, insets: ChromeInsets, layer: &mu
             }))
             .child(el().grow(1.0).h_full().window_drag())
             .children((ready && state.has_worktree).then(|| filters(state.filter, kit)))
+            .children(
+                state
+                    .workspace
+                    .as_ref()
+                    .and_then(crate::repositories::Workspace::active)
+                    .map(|_| super::terminal::toggle(state, kit)),
+            )
     }
 }
 

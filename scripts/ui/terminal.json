@@ -1,0 +1,8 @@
+{
+  "events": [
+    {"t": 0.1, "type": "key", "name": "`", "ctrl": true},
+    {"t": 0.7, "type": "type", "text": "git status"},
+    {"t": 1.5, "type": "key", "name": "Enter"},
+    {"t": 2.3, "type": "mark", "name": "status"}
+  ]
+}
