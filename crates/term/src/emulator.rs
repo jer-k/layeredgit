@@ -1,5 +1,5 @@
 use ghostty_vt::{
-    Terminal, TerminalOptions, focus, key, paste,
+    Terminal, TerminalOptions, focus, key, paste, snapshot,
     style::{Palette, RgbColor},
     terminal::{ColorScheme, Event, Mode, ScrollViewport},
 };
@@ -36,6 +36,29 @@ impl Emulator {
         };
         emulator.resize(size)?;
         Ok(emulator)
+    }
+
+    /// Restores a Rex Ghostty snapshot, including the parser state and scrollback.
+    ///
+    /// # Errors
+    /// Returns Ghostty's error if the snapshot cannot be decoded or configured.
+    pub fn from_snapshot(bytes: &[u8]) -> Result<Self, VtError> {
+        let mut terminal = snapshot::Decoder::new(bytes)?.decode()?;
+        terminal.set_size_reports(false);
+        terminal.set_clipboard_write_policy(ghostty_vt::terminal::ClipboardWritePolicy::Deny);
+        terminal.set_default_cursor_color(None)?;
+        terminal.scroll_viewport(ScrollViewport::Bottom);
+        Ok(Self {
+            terminal,
+            renderer: Renderer::new()?,
+            encoder: key::Encoder::new()?,
+            event: key::Event::new()?,
+        })
+    }
+
+    /// Discards VT replies from the local emulator when the source handles them.
+    pub fn discard_responses(&mut self) {
+        drop(self.terminal.events());
     }
 
     /// Applies theme defaults while preserving colours explicitly set by the program.

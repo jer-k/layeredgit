@@ -66,6 +66,7 @@ pub(super) fn pane(state: &State, kit: &Kit, scale: f32) -> El {
         .on_wheel(|state: &mut State, wheel, tx| state.terminal_scroll(wheel.dy, tx))
         .h(GRID_HEIGHT)
         .w_full()
+        .clip_rounded(0.0)
         .child(
             // Remount the geometry listener when appearance or backing scale changes.
             // The enclosing focus target and the viewport keep their keys.
@@ -148,6 +149,14 @@ fn header(state: &State, kit: &Kit) -> El {
                 .font(kit.ty.ui_medium)
                 .color(kit.c.text_base),
         )
+        .children(state.terminal.backend_label().map(|label| {
+            text(label)
+                .key("terminal-backend")
+                .font(kit.ty.small)
+                .color(kit.c.text_muted)
+                .shrink()
+                .truncate_middle()
+        }))
         .children(state.terminal.status().map(|status| {
             text(status)
                 .key("terminal-status")
@@ -158,6 +167,14 @@ fn header(state: &State, kit: &Kit) -> El {
                 .truncate_middle()
         }))
         .child(el().grow(1.0))
+        .children(state.terminal.can_open_in_rex().then(|| {
+            Button::new("Open in Rex")
+                .variant(ButtonVariant::Ghost)
+                .control_size(ControlSize::Small)
+                .on_press_tx(State::open_terminal_in_rex)
+                .build(kit)
+                .key("terminal-open-in-rex")
+        }))
         .child(
             IconButton::new(kit.glyph.close)
                 .variant(IconButtonVariant::GhostMuted)

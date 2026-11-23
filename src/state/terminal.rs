@@ -1,6 +1,9 @@
 use std::{
     path::PathBuf,
-    sync::atomic::{AtomicU64, Ordering},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        mpsc::TryRecvError,
+    },
 };
 
 use rune::{Color, Ime, KeyEvent, Tx, Waker, color};
@@ -8,7 +11,7 @@ use rune_kit::{
     Kit,
     syntax::{Syntax, SyntaxTheme},
 };
-use term::{Emulator, LocalPty, RgbColor, Screen, Size, Source, SourceEvent, key};
+use term::{Emulator, LocalPty, RexPty, RgbColor, Screen, Size, Source, SourceEvent, key};
 
 use super::State;
 
@@ -18,7 +21,7 @@ pub(crate) const SCREEN_KEY: &str = "terminal-screen";
 pub(crate) const CELL_HEIGHT: f32 = 20.0;
 pub(crate) const CELL_WIDTH: f32 = 7.25;
 const TOGGLE: rune::Chord = rune::Chord::new(rune::ChordKey::Char('`')).with(rune::ChordMod::Ctrl);
-static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
+static NEXT_EMULATOR: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Default)]
 pub(crate) struct TerminalPane {
@@ -31,6 +34,7 @@ pub(crate) struct TerminalPane {
     geometry: Option<(Size, bool)>,
     session: Option<Session>,
     status: Status,
+    notice: Option<String>,
     wheel_remainder: f32,
 }
 
@@ -44,16 +48,65 @@ enum Status {
 
 struct Session {
     emulator: Emulator,
-    source: Option<Box<dyn Source>>,
+    source: Option<Transport>,
+    backend: Backend,
+}
+
+enum Backend {
+    Connecting { cwd: PathBuf, waker: Waker },
+    Local,
+    Rex(String),
+}
+
+enum Transport {
+    Local(LocalPty),
+    Rex(RexPty),
+}
+
+impl Transport {
+    fn source(&self) -> &dyn Source {
+        match self {
+            Self::Local(source) => source,
+            Self::Rex(source) => source,
+        }
+    }
+
+    fn drain_replies(&self, emulator: &mut Emulator) {
+        match self {
+            Self::Local(source) => emulator.flush_responses(source),
+            // Rex's emulator is already responsible for answering terminal queries.
+            Self::Rex(_) => emulator.discard_responses(),
+        }
+    }
+}
+
+impl Session {
+    fn follows_remote_size(&self) -> bool {
+        matches!(self.backend, Backend::Rex(_))
+    }
 }
 
 impl TerminalPane {
     pub(crate) fn status(&self) -> Option<&str> {
         match &self.status {
             Status::Starting => Some("Starting shell…"),
-            Status::Running => None,
+            Status::Running => self.notice.as_deref(),
             Status::Ended(message) => Some(message),
         }
+    }
+
+    pub(crate) fn backend_label(&self) -> Option<&str> {
+        match &self.session.as_ref()?.backend {
+            Backend::Connecting { .. } => None,
+            Backend::Local => Some("Local shell"),
+            Backend::Rex(label) => Some(label),
+        }
+    }
+
+    pub(crate) fn can_open_in_rex(&self) -> bool {
+        self.session.as_ref().is_some_and(|session| {
+            session.follows_remote_size() && matches!(session.source, Some(Transport::Rex(_)))
+        })
     }
 
     pub(crate) fn ended(&self) -> bool {
@@ -70,25 +123,52 @@ impl TerminalPane {
         let Some((size, dark)) = self.geometry else {
             return;
         };
-        self.id = NEXT_SESSION.fetch_add(1, Ordering::Relaxed);
+        self.id = NEXT_EMULATOR.fetch_add(1, Ordering::Relaxed);
         self.wheel_remainder = 0.0;
         self.preedit.clear();
         self.status = Status::Starting;
+        self.notice = None;
         self.session = None;
         let result = (|| -> Result<Session, String> {
             let mut emulator = Emulator::new(size).map_err(|error| error.to_string())?;
             apply_theme(&mut emulator, dark).map_err(|error| error.to_string())?;
             emulator.update().map_err(|error| error.to_string())?;
-            let source =
-                LocalPty::login_shell(cwd, size, waker).map_err(|error| error.to_string())?;
+            let source = RexPty::connect(cwd.clone(), size, waker.clone())
+                .ok()
+                .map(Transport::Rex);
             Ok(Session {
                 emulator,
-                source: Some(Box::new(source)),
+                source,
+                backend: Backend::Connecting { cwd, waker },
             })
         })();
         match result {
-            Ok(session) => self.session = Some(session),
+            Ok(session) => {
+                let use_local = session.source.is_none();
+                self.session = Some(session);
+                if use_local {
+                    self.start_local();
+                }
+            }
             Err(error) => self.fail(&error),
+        }
+    }
+
+    fn start_local(&mut self) {
+        let Some((size, _)) = self.geometry else {
+            return;
+        };
+        let Some(session) = &mut self.session else {
+            return;
+        };
+        let Backend::Connecting { cwd, waker } =
+            std::mem::replace(&mut session.backend, Backend::Local)
+        else {
+            return;
+        };
+        match LocalPty::login_shell(cwd, size, waker) {
+            Ok(source) => session.source = Some(Transport::Local(source)),
+            Err(error) => self.fail(&error.to_string()),
         }
     }
 
@@ -129,10 +209,12 @@ impl TerminalPane {
                 apply_theme(&mut session.emulator, dark)?;
             }
             if previous.is_none_or(|(previous, _)| previous != size) {
-                session.emulator.resize(size)?;
+                if !session.follows_remote_size() {
+                    session.emulator.resize(size)?;
+                }
                 if let Some(source) = &session.source {
-                    source.resize(size);
-                    session.emulator.flush_responses(source.as_ref());
+                    source.source().resize(size);
+                    source.drain_replies(&mut session.emulator);
                 }
             }
             Ok::<_, term::VtError>(())
@@ -151,19 +233,60 @@ impl TerminalPane {
         let Some(source) = &session.source else {
             return false;
         };
+        let geometry = self.geometry;
         let mut received = false;
         let mut status_changed = false;
         let mut ended = None;
         // Bounded work per frame so a busy terminal leaves time for input and layout.
         for index in 0..32 {
-            match source.try_event() {
+            match source.source().try_event() {
                 Ok(SourceEvent::Started) => {
                     self.status = Status::Running;
                     status_changed = true;
                 }
+                Ok(SourceEvent::RexAttached {
+                    session_label,
+                    snapshot,
+                }) => {
+                    let dark = geometry.is_some_and(|(_, dark)| dark);
+                    let Ok(emulator) =
+                        Emulator::from_snapshot(&snapshot).and_then(|mut emulator| {
+                            apply_theme(&mut emulator, dark)?;
+                            Ok(emulator)
+                        })
+                    else {
+                        self.start_local();
+                        return true;
+                    };
+                    // The snapshot can reuse row IDs and revisions from the blank emulator.
+                    self.id = NEXT_EMULATOR.fetch_add(1, Ordering::Relaxed);
+                    session.emulator = emulator;
+                    session.backend = Backend::Rex(format!("Rex · {session_label}"));
+                    self.status = Status::Running;
+                    status_changed = true;
+                    received = true;
+                }
+                Ok(SourceEvent::Resized(mut size)) => {
+                    if let Some((pane, _)) = geometry
+                        && (size.cell_width == 0 || size.cell_height == 0)
+                    {
+                        size.cell_width = pane.cell_width;
+                        size.cell_height = pane.cell_height;
+                    }
+                    if let Err(error) = session.emulator.resize(size) {
+                        ended = Some(format!("Terminal error · {error}"));
+                        break;
+                    }
+                    source.drain_replies(&mut session.emulator);
+                    received = true;
+                }
+                Ok(SourceEvent::Notice(message)) => {
+                    self.notice = Some(message);
+                    status_changed = true;
+                }
                 Ok(SourceEvent::Output(bytes)) => {
                     session.emulator.feed(&bytes);
-                    session.emulator.flush_responses(source.as_ref());
+                    source.drain_replies(&mut session.emulator);
                     received = true;
                 }
                 Ok(SourceEvent::Exited(status)) => {
@@ -174,8 +297,8 @@ impl TerminalPane {
                     ended = Some(format!("Terminal error · {error}"));
                     break;
                 }
-                Err(std::sync::mpsc::TryRecvError::Empty) => break,
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
                     ended = Some("Shell disconnected".into());
                     break;
                 }
@@ -185,6 +308,10 @@ impl TerminalPane {
             }
         }
         if let Some(message) = ended {
+            if matches!(session.backend, Backend::Connecting { .. }) {
+                self.start_local();
+                return true;
+            }
             self.status = Status::Ended(message);
             session.source = None;
             self.preedit.clear();
@@ -203,7 +330,7 @@ impl TerminalPane {
             && let Some(source) = &session.source
             && let Ok(bytes) = session.emulator.encode_focus(focused)
         {
-            source.write(bytes);
+            source.source().write(bytes);
         }
         true
     }
@@ -221,7 +348,7 @@ impl TerminalPane {
         match encode(&mut session.emulator) {
             Ok(bytes) if bytes.is_empty() => false,
             Ok(bytes) => {
-                source.write(bytes);
+                source.source().write(bytes);
                 session.emulator.scroll_to_bottom();
                 self.refresh_screen()
             }
@@ -259,6 +386,19 @@ impl State {
         }
         tx.focus_when_shown(SCREEN_KEY, false);
         tx.instant();
+    }
+
+    pub(crate) fn open_terminal_in_rex(&mut self, tx: &mut Tx) {
+        if let Some(Transport::Rex(source)) = self
+            .terminal
+            .session
+            .as_ref()
+            .and_then(|session| session.source.as_ref())
+        {
+            source.open_in_rex();
+            self.terminal.notice = None;
+            tx.instant();
+        }
     }
 
     pub(crate) fn hide_terminal(&mut self, tx: &mut Tx) {

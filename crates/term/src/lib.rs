@@ -1,13 +1,17 @@
-//! A Ghostty terminal emulator and an asynchronous local PTY transport.
+//! A Ghostty terminal emulator and asynchronous local PTY and Rex transports.
 
 mod emulator;
 mod pty;
+mod rex;
 mod screen;
+mod source;
 
 pub use emulator::Emulator;
 pub use ghostty_vt::{Error as VtError, key, render::CursorVisualStyle, style::RgbColor};
-pub use pty::{LocalPty, Source, SourceEvent};
+pub use pty::LocalPty;
+pub use rex::RexPty;
 pub use screen::{Cell, Cursor, Row, Screen};
+pub use source::{Source, SourceEvent};
 
 /// Terminal dimensions in cells and the physical size of one cell.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

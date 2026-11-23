@@ -2,44 +2,16 @@ use std::{
     env, io,
     io::{Read, Write},
     path::PathBuf,
-    sync::{
-        Arc,
-        mpsc::{self, Receiver, Sender, SyncSender, TryRecvError},
-    },
+    sync::mpsc::{self, Receiver, Sender, TryRecvError},
     thread,
 };
 
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
-use crate::Size;
-
-/// Messages from a terminal byte source, in stream order.
-#[derive(Debug)]
-pub enum SourceEvent {
-    /// The program started and can receive input.
-    Started,
-    /// Bytes emitted by the program.
-    Output(Vec<u8>),
-    /// The session ended, with a human-readable exit status.
-    Exited(String),
-    /// The session failed, with its error message.
-    Failed(String),
-}
-
-/// A bidirectional terminal byte stream. Calls from the view must not block on I/O.
-pub trait Source {
-    /// Queues bytes for the program's input.
-    fn write(&self, data: Vec<u8>);
-
-    /// Queues a resize for the program.
-    fn resize(&self, size: Size);
-
-    /// Takes the next available event without waiting.
-    ///
-    /// # Errors
-    /// Reports whether the stream currently has no events or has disconnected.
-    fn try_event(&self) -> Result<SourceEvent, TryRecvError>;
-}
+use crate::{
+    Size, Source, SourceEvent,
+    source::{Output, Wake},
+};
 
 /// A local PTY session. Dropping it asks the worker to end the session.
 pub struct LocalPty {
@@ -52,24 +24,6 @@ enum Command {
     Resize(Size),
     Eof(io::Result<()>),
     Stop,
-}
-
-type Wake = Arc<dyn Fn() + Send + Sync>;
-
-#[derive(Clone)]
-struct Output {
-    events: SyncSender<SourceEvent>,
-    wake: Wake,
-}
-
-impl Output {
-    fn send(&self, event: SourceEvent) -> bool {
-        if self.events.send(event).is_err() {
-            return false;
-        }
-        (self.wake)();
-        true
-    }
 }
 
 impl LocalPty {
@@ -105,7 +59,7 @@ impl LocalPty {
     ) -> io::Result<Self> {
         let (commands, input) = mpsc::channel();
         let (send, events) = mpsc::sync_channel(32);
-        let output = Output { events: send, wake };
+        let output = Output::new(send, wake);
         let reader_commands = commands.clone();
         thread::Builder::new()
             .name("terminal-pty".into())
@@ -237,7 +191,7 @@ impl From<Size> for PtySize {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, reason = "Fail the test when PTY setup fails")]
 mod tests {
-    use std::time::Duration;
+    use std::{sync::Arc, time::Duration};
 
     use super::*;
 
@@ -271,7 +225,7 @@ mod tests {
                     break;
                 }
                 SourceEvent::Failed(error) => panic!("{error}"),
-                SourceEvent::Started => panic!("duplicate start event"),
+                event => panic!("Unexpected {event:?}"),
             }
         }
         assert_eq!(bytes, b"hello from the PTY");
