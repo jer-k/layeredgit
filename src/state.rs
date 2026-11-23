@@ -4,6 +4,7 @@ mod files;
 mod panels;
 mod pulse;
 mod restore;
+pub(crate) mod terminal;
 mod workspace;
 
 pub(crate) use files::FileTree;
@@ -39,6 +40,7 @@ pub(crate) struct State {
     /// The embedded app icon used in the toolbar and empty workspace.
     pub(crate) workspace: Option<Workspace>,
     pub(crate) panels: panels::Panels,
+    pub(crate) terminal: terminal::TerminalPane,
     pub(crate) review: Arc<Review>,
     pub(crate) status: Status,
     pub(crate) has_worktree: bool,
@@ -105,6 +107,7 @@ impl State {
         Self {
             workspace: None,
             panels: panels::Panels::default(),
+            terminal: terminal::TerminalPane::default(),
             review: Arc::new(review),
             status,
             has_worktree: true,
@@ -185,6 +188,7 @@ impl State {
     }
 
     pub(crate) fn poll(&mut self, now: f64, tx: &mut Tx) -> bool {
+        let terminal_changed = self.poll_terminal(tx);
         self.reveal_sidebar(tx);
         self.inspect_open_picker();
         let pulse_ended = self.pulse.files().next().is_some() && {
@@ -225,7 +229,7 @@ impl State {
             Some(Err(error)) => self.show_error(error.to_string()),
             None => false,
         };
-        pulse_ended || reloaded || updated_summary
+        pulse_ended || reloaded || updated_summary || terminal_changed
     }
 
     fn set_worktree(&mut self, enabled: bool) {
@@ -488,6 +492,9 @@ impl State {
     }
 
     pub(crate) fn key(&mut self, event: &KeyEvent, tx: &mut Tx) -> bool {
+        if self.terminal_shortcut(event, tx) {
+            return true;
+        }
         #[cfg(feature = "dev")]
         if self.tuning.key(event, self.system_dark.get(), tx) {
             return true;
