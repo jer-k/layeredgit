@@ -1,6 +1,12 @@
-use std::{borrow::Cow, ops::Range};
+use std::{
+    borrow::Cow,
+    ops::{Range, RangeInclusive},
+};
 
-use rune::{Color, El, GrowthSpec, ScrollSpec, TextStyle, col, color, el, memo, row, text};
+use rune::{
+    Color, Cursor, El, GrowthSpec, PointerButton, ScrollSpec, TextStyle, col, color, el, memo, row,
+    text,
+};
 use rune_kit::{Button, ButtonVariant, ControlSize, IconButton, IconButtonVariant, Kit};
 use term::{Cell, CursorVisualStyle, RgbColor, Row, Size};
 
@@ -53,9 +59,9 @@ pub(super) fn pane(state: &State, kit: &Kit, scale: f32) -> El {
         foreground: fg,
         background: bg,
         font,
+        selection: kit.selection(),
     };
     let dark = kit.dark;
-    let visible_rows = pane.visible_rows();
     let columns = pane.columns();
     let canvas = col()
         .key(SCREEN_KEY)
@@ -63,9 +69,14 @@ pub(super) fn pane(state: &State, kit: &Kit, scale: f32) -> El {
         .label("Terminal output and input")
         .focusable(true)
         .no_focus_ring()
+        .cursor(Cursor::Text)
         .on_key(State::terminal_key)
         .on_key_up(State::terminal_key_up)
-        .on_wheel(|state: &mut State, wheel, tx| state.terminal_scroll(wheel.dy, tx))
+        .on_wheel(State::terminal_wheel)
+        .pointer_buttons([PointerButton::Middle])
+        .on_drag(State::terminal_drag)
+        .on_pointer_move_local(State::terminal_pointer_move)
+        .on_secondary_press_local(State::terminal_context_menu)
         .h(GRID_HEIGHT)
         .w_full()
         .clip_rounded(0.0)
@@ -81,44 +92,8 @@ pub(super) fn pane(state: &State, kit: &Kit, scale: f32) -> El {
                     state.layout_terminal(grid_size(rect[2], rect[3], scale), dark, tx);
                 }),
         )
-        .child(
-            col()
-                .key("terminal-viewport")
-                .w_full()
-                .h_full()
-                .scroll(ScrollSpec {
-                    stick_bottom: false,
-                })
-                .on_wheel(|state: &mut State, wheel, tx| state.terminal_scroll(wheel.dy, tx))
-                .child(
-                    col()
-                        .key("terminal-rows")
-                        .w_full()
-                        .growth(GrowthSpec::default())
-                        .virtual_rows(
-                            visible_rows.len(),
-                            CELL_HEIGHT,
-                            |state: &State, index| {
-                                terminal_row(state, index)
-                                    .map_or(Cow::Borrowed(""), |row| Cow::Borrowed(&row.key))
-                            },
-                            move |state: &State, index| {
-                                terminal_row(state, index).map_or_else(
-                                    || el().h(CELL_HEIGHT).w_full(),
-                                    |row| {
-                                        memo(
-                                            &row.key,
-                                            (state.terminal.id, row.revision, look, columns),
-                                            || look.draw_row(row, columns),
-                                        )
-                                    },
-                                )
-                            },
-                        )
-                        .virtual_rows_version((pane.id, pane.version)),
-                ),
-        )
-        .children(viewport_cursor(state, visible_rows, columns, look));
+        .child(viewport(state, look, columns))
+        .children(viewport_cursor(state, pane.visible_rows(), columns, look));
     col()
         .key("terminal-pane")
         .instant_changes()
@@ -127,6 +102,52 @@ pub(super) fn pane(state: &State, kit: &Kit, scale: f32) -> El {
         .border_sides([1.0, 0.0, 0.0, 0.0], kit.c.border_muted)
         .child(header(state, kit))
         .child(col().px(PADDING).py(8.0).w_full().child(canvas))
+}
+
+fn viewport(state: &State, look: RowStyle, columns: u16) -> El {
+    let pane = &state.terminal;
+    col()
+        .key("terminal-viewport")
+        .w_full()
+        .h_full()
+        .scroll(ScrollSpec {
+            stick_bottom: false,
+        })
+        .on_wheel(State::terminal_wheel)
+        .child(
+            col()
+                .key("terminal-rows")
+                .w_full()
+                .growth(GrowthSpec::default())
+                .virtual_rows(
+                    pane.visible_rows().len(),
+                    CELL_HEIGHT,
+                    |state: &State, index| {
+                        terminal_row(state, index)
+                            .map_or(Cow::Borrowed(""), |row| Cow::Borrowed(&row.key))
+                    },
+                    move |state: &State, index| {
+                        let pane = &state.terminal;
+                        let selected = pane.screen().and_then(|screen| {
+                            screen
+                                .selection
+                                .get(pane.visible_rows().start + index)?
+                                .as_ref()
+                        });
+                        terminal_row(state, index).map_or_else(
+                            || el().h(CELL_HEIGHT).w_full(),
+                            |row| {
+                                memo(
+                                    &row.key,
+                                    (pane.id, row.revision, look, columns, selected),
+                                    || look.draw_row(row, columns, selected),
+                                )
+                            },
+                        )
+                    },
+                )
+                .virtual_rows_version((pane.id, pane.version, columns, look)),
+        )
 }
 
 fn header(state: &State, kit: &Kit) -> El {
@@ -185,19 +206,42 @@ struct RowStyle {
     foreground: Color,
     background: Color,
     font: TextStyle,
+    selection: Color,
 }
 
 impl RowStyle {
-    fn draw_row(self, row: &Row, columns: u16) -> El {
-        el().w_full().h(CELL_HEIGHT).children(
-            row.cells
-                .iter()
-                .take_while(|cell| cell.column < columns)
-                .map(|cell| self.draw_cell(cell)),
-        )
+    fn draw_row(self, row: &Row, columns: u16, selected: Option<&RangeInclusive<u16>>) -> El {
+        let cells = row.cells.iter().take_while(|cell| cell.column < columns);
+        let mut line = el().w_full().h(CELL_HEIGHT);
+        let selected = selected.filter(|selected| *selected.start() < columns);
+        if let Some(selected) = selected {
+            let first = *selected.start();
+            let end = selected.end().saturating_add(1).min(columns);
+            line = line
+                .children(cells.clone().filter_map(|cell| {
+                    self.cell_background(cell)
+                        .map(|background| cell_rect(cell).fill(background))
+                }))
+                .child(
+                    el().key("terminal-selection")
+                        .absolute(f32::from(first) * CELL_WIDTH, 0.0)
+                        .size(f32::from(end - first) * CELL_WIDTH, CELL_HEIGHT)
+                        .fill(self.selection)
+                        .inert(),
+                );
+        }
+        line.children(cells.map(|cell| self.draw_cell(cell, selected.is_none())))
     }
 
-    fn draw_cell(self, cell: &Cell) -> El {
+    fn cell_background(self, cell: &Cell) -> Option<Color> {
+        if cell.inverse {
+            Some(cell.foreground.map_or(self.foreground, color_from_rgb))
+        } else {
+            cell.background.map(color_from_rgb)
+        }
+    }
+
+    fn draw_cell(self, cell: &Cell, paint_background: bool) -> El {
         let mut foreground = cell.foreground.map_or(self.foreground, color_from_rgb);
         let mut background = cell.background.map_or(self.background, color_from_rgb);
         if cell.inverse {
@@ -223,14 +267,17 @@ impl RowStyle {
         let strike = cell
             .strikethrough
             .then(|| el().absolute(0.0, 10.0).size(width, 1.0).fill(foreground));
-        let mut item = el()
-            .absolute(f32::from(cell.column) * CELL_WIDTH, 0.0)
-            .size(width, CELL_HEIGHT);
-        if cell.inverse || cell.background.is_some() {
+        let mut item = cell_rect(cell);
+        if paint_background && (cell.inverse || cell.background.is_some()) {
             item = item.fill(background);
         }
         item.children(glyph).children(underline).children(strike)
     }
+}
+
+fn cell_rect(cell: &Cell) -> El {
+    el().absolute(f32::from(cell.column) * CELL_WIDTH, 0.0)
+        .size(f32::from(cell.width) * CELL_WIDTH, CELL_HEIGHT)
 }
 
 fn viewport_cursor(state: &State, rows: Range<usize>, columns: u16, look: RowStyle) -> Option<El> {

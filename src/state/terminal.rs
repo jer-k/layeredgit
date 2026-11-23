@@ -17,6 +17,7 @@ use term::{Emulator, LocalPty, RexPty, RgbColor, Screen, Size, Source, SourceEve
 use super::State;
 
 mod keys;
+mod pointer;
 mod viewport;
 
 use viewport::{Grid, Viewport};
@@ -26,6 +27,7 @@ pub(crate) const CELL_HEIGHT: f32 = 20.0;
 pub(crate) const CELL_WIDTH: f32 = 7.25;
 const TOGGLE: rune::Chord = rune::Chord::new(rune::ChordKey::Char('`')).with(rune::ChordMod::Ctrl);
 const OPEN: rune::Chord = rune::Chord::new(rune::ChordKey::Char('t')).with(rune::ChordMod::Super);
+const COPY: rune::Chord = rune::Chord::new(rune::ChordKey::Char('c')).with(rune::ChordMod::Super);
 static NEXT_EMULATOR: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Default)]
@@ -42,6 +44,7 @@ pub(crate) struct TerminalPane {
     notice: Option<String>,
     wheel_remainder: f32,
     viewport: Viewport,
+    pointer: pointer::Pointer,
 }
 
 #[derive(Default)]
@@ -156,7 +159,9 @@ impl TerminalPane {
     }
 
     pub(crate) fn columns(&self) -> u16 {
-        self.geometry.map_or(0, |(size, _)| size.cols)
+        let pane = self.geometry.map_or(0, |(size, _)| size.cols);
+        self.screen()
+            .map_or(pane, |screen| pane.min(screen.columns))
     }
 
     fn pane_rows(&self) -> usize {
@@ -170,6 +175,7 @@ impl TerminalPane {
         self.id = NEXT_EMULATOR.fetch_add(1, Ordering::Relaxed);
         self.wheel_remainder = 0.0;
         self.viewport = Viewport::default();
+        self.pointer = pointer::Pointer::default();
         self.preedit.clear();
         self.status = Status::Starting;
         self.notice = None;
@@ -316,6 +322,7 @@ impl TerminalPane {
                     };
                     // The snapshot can reuse row IDs and revisions from the blank emulator.
                     self.id = NEXT_EMULATOR.fetch_add(1, Ordering::Relaxed);
+                    self.pointer = pointer::Pointer::default();
                     session.emulator = emulator;
                     session.backend = Backend::Rex(format!("Rex · {session_label}"));
                     self.status = Status::Running;
@@ -390,6 +397,7 @@ impl TerminalPane {
 
     fn input(
         &mut self,
+        clear_selection: bool,
         encode: impl FnOnce(&mut Emulator) -> Result<Vec<u8>, term::VtError>,
     ) -> bool {
         let Some(session) = &mut self.session else {
@@ -402,6 +410,10 @@ impl TerminalPane {
             Ok(bytes) if bytes.is_empty() => false,
             Ok(bytes) => {
                 source.source().write(bytes);
+                if clear_selection {
+                    let _ = session.emulator.clear_selection();
+                    self.pointer.cancel_selection();
+                }
                 self.viewport.follow();
                 session.emulator.scroll_to_bottom();
                 self.refresh_screen()
@@ -411,6 +423,24 @@ impl TerminalPane {
                 true
             }
         }
+    }
+
+    fn scroll_rows(&mut self, rows: isize) -> bool {
+        let pane_rows = self.pane_rows();
+        let Some(session) = &mut self.session else {
+            return false;
+        };
+        let grid = match session.viewport_grid() {
+            Ok(grid) => grid,
+            Err(error) => {
+                self.fail(&error.to_string());
+                return true;
+            }
+        };
+        if let Some(offset) = self.viewport.scroll(&grid, pane_rows, rows) {
+            session.emulator.scroll_to_row(offset);
+        }
+        self.refresh_screen()
     }
 }
 
@@ -493,6 +523,10 @@ impl State {
         if self.terminal_shortcut(event, tx) {
             return true;
         }
+        if COPY.matches_tx(event, tx) && self.terminal.copy_selection(tx) {
+            tx.live_only();
+            return true;
+        }
         if keys::super_held(event) && !OPEN.matches_tx(event, tx) {
             return false;
         }
@@ -503,7 +537,7 @@ impl State {
         };
         if !self
             .terminal
-            .input(|emulator| keys::encode(emulator, event, tx, action))
+            .input(true, |emulator| keys::encode(emulator, event, tx, action))
         {
             tx.live_only();
         }
@@ -517,10 +551,9 @@ impl State {
         {
             return false;
         }
-        if !self
-            .terminal
-            .input(|emulator| keys::encode(emulator, event, tx, key::Action::Release))
-        {
+        if !self.terminal.input(false, |emulator| {
+            keys::encode(emulator, event, tx, key::Action::Release)
+        }) {
             tx.live_only();
         }
         true
@@ -528,7 +561,9 @@ impl State {
 
     pub(crate) fn terminal_paste(&mut self, text: &str, tx: &mut Tx) {
         if tx.focused() != Some(SCREEN_KEY)
-            || !self.terminal.input(|emulator| emulator.encode_paste(text))
+            || !self
+                .terminal
+                .input(true, |emulator| emulator.encode_paste(text))
         {
             tx.live_only();
         }
@@ -542,7 +577,7 @@ impl State {
         match ime {
             Ime::Commit(text) => {
                 self.terminal.preedit.clear();
-                self.terminal.input(|emulator| {
+                self.terminal.input(true, |emulator| {
                     emulator.encode_key(
                         key::Key::Unidentified,
                         key::Action::Press,
@@ -567,41 +602,6 @@ impl State {
         {
             tx.live_only();
         }
-    }
-
-    pub(crate) fn terminal_scroll(&mut self, dy: f32, tx: &mut Tx) -> bool {
-        let pane_rows = self.terminal.pane_rows();
-        if let Some(session) = &mut self.terminal.session {
-            // Rune's dy is positive when content should move down, which reveals older rows.
-            self.terminal.wheel_remainder -= dy / CELL_HEIGHT;
-            #[expect(
-                clippy::cast_possible_truncation,
-                reason = "Keep only whole rows; retain the remainder"
-            )]
-            let rows = self.terminal.wheel_remainder.trunc().clamp(-1000.0, 1000.0) as i16;
-            if rows != 0 {
-                self.terminal.wheel_remainder -= f32::from(rows);
-                let grid = match session.viewport_grid() {
-                    Ok(grid) => grid,
-                    Err(error) => {
-                        self.terminal.fail(&error.to_string());
-                        return true;
-                    }
-                };
-                if let Some(offset) =
-                    self.terminal
-                        .viewport
-                        .scroll(&grid, pane_rows, isize::from(rows))
-                {
-                    session.emulator.scroll_to_row(offset);
-                }
-                if self.terminal.refresh_screen() {
-                    return true;
-                }
-            }
-        }
-        tx.live_only();
-        true
     }
 
     pub(super) fn poll_terminal(&mut self, tx: &mut Tx) -> bool {

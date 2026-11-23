@@ -1,4 +1,4 @@
-use std::{collections::HashMap, rc::Rc};
+use std::{collections::HashMap, ops::RangeInclusive, rc::Rc};
 
 use ghostty_vt::{
     RenderState, Terminal,
@@ -66,6 +66,10 @@ pub struct Cursor {
 pub struct Screen {
     /// Cached rows in viewport order.
     pub rows: Vec<Option<Rc<Row>>>,
+    /// Number of columns in the emulated grid.
+    pub columns: u16,
+    /// Selected columns for each viewport row, including unpainted cells.
+    pub selection: Vec<Option<RangeInclusive<u16>>>,
     /// Current default foreground.
     pub foreground: Option<RgbColor>,
     /// Current default background.
@@ -119,6 +123,7 @@ impl Renderer {
         self.screen.cursor = cursor;
 
         let dirty = snapshot.dirty()?;
+        self.screen.columns = snapshot.cols()?;
         if dirty == Dirty::Clean && !colors_changed {
             return Ok(cursor_moved);
         }
@@ -127,11 +132,15 @@ impl Renderer {
         let mut rows = self.row_iter.update(&snapshot)?;
         let mut next = HashMap::new();
         let mut viewport = vec![None; usize::from(snapshot.rows()?)];
+        let mut selection = vec![None; viewport.len()];
         while let Some(row) = rows.next() {
-            let y = row.viewport_y()?;
-            let Some(slot) = usize::try_from(y).ok().and_then(|y| viewport.get_mut(y)) else {
+            let Ok(y) = usize::try_from(row.viewport_y()?) else {
                 continue;
             };
+            let Some((slot, selected)) = viewport.get_mut(y).zip(selection.get_mut(y)) else {
+                continue;
+            };
+            *selected = row.selection()?.map(|range| range.start_x..=range.end_x);
             let id = row.id()?;
             let cached = self.rows.get(&id);
             let refresh = dirty == Dirty::Full || colors_changed || row.dirty()?;
@@ -175,7 +184,9 @@ impl Renderer {
                 });
         self.rows = next;
         self.screen.rows = viewport;
-        Ok(changed || colors_changed || cursor_moved)
+        let selection_changed = self.screen.selection != selection;
+        self.screen.selection = selection;
+        Ok(changed || colors_changed || cursor_moved || selection_changed)
     }
 }
 

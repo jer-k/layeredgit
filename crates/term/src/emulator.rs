@@ -6,12 +6,17 @@ use ghostty_vt::{
 
 use crate::{Screen, Size, Source, VtError, screen::Renderer};
 
+mod mouse;
+mod selection;
+
 /// Owns the thread-affine Ghostty handles and their cached viewport.
 pub struct Emulator {
     terminal: Terminal,
     renderer: Renderer,
     encoder: key::Encoder,
     event: key::Event,
+    mouse: mouse::Mouse,
+    selection: selection::Gesture,
 }
 
 impl Emulator {
@@ -33,6 +38,8 @@ impl Emulator {
             renderer: Renderer::new()?,
             encoder: key::Encoder::new()?,
             event: key::Event::new()?,
+            mouse: mouse::Mouse::new()?,
+            selection: selection::Gesture::new()?,
         };
         emulator.resize(size)?;
         Ok(emulator)
@@ -53,6 +60,8 @@ impl Emulator {
             renderer: Renderer::new()?,
             encoder: key::Encoder::new()?,
             event: key::Event::new()?,
+            mouse: mouse::Mouse::new()?,
+            selection: selection::Gesture::new()?,
         })
     }
 
@@ -283,5 +292,142 @@ mod tests {
             emulator.encode_paste("hello").unwrap(),
             b"\x1b[200~hello\x1b[201~"
         );
+    }
+
+    #[test]
+    fn copies_hard_lines_and_joins_soft_wraps() -> Result<(), VtError> {
+        let mut emulator = Emulator::new(Size {
+            cols: 20,
+            rows: 5,
+            cell_width: 7,
+            cell_height: 20,
+        })?;
+        emulator.feed("  alpha   \r\nabcdefghijklmnopqrs tuvw\r\n界!   ".as_bytes());
+        emulator.update()?;
+        emulator.start_selection([0.1, 0.0], 1)?;
+        assert_eq!(emulator.selected_text()?, None);
+        emulator.drag_selection([19.9, 3.0])?;
+        emulator.finish_selection()?;
+        assert_eq!(
+            emulator.selected_text()?.as_deref(),
+            Some("  alpha\nabcdefghijklmnopqrs tuvw\n界!")
+        );
+        assert!(emulator.update()?);
+        assert_eq!(
+            emulator.screen().selection,
+            [Some(0..=19), Some(0..=19), Some(0..=19), Some(0..=19), None]
+        );
+        emulator.start_selection([3.0, 0.0], 1)?;
+        emulator.finish_selection()?;
+        assert_eq!(emulator.selected_text()?, None);
+        assert!(emulator.update()?);
+        assert!(emulator.screen().selection.iter().all(Option::is_none));
+        Ok(())
+    }
+
+    #[test]
+    fn selects_words_and_lines_and_keeps_them_anchored_in_history() -> Result<(), VtError> {
+        let mut emulator = emulator();
+        emulator.feed(b"first word\r\nsecond\r\nthird");
+        emulator.update()?;
+        emulator.start_selection([7.0, 0.0], 2)?;
+        emulator.finish_selection()?;
+        assert_eq!(emulator.selected_text()?.as_deref(), Some("word"));
+        emulator.start_selection([7.0, 0.0], 3)?;
+        emulator.finish_selection()?;
+        assert_eq!(emulator.selected_text()?.as_deref(), Some("first word"));
+
+        emulator.feed(b"\r\nfourth");
+        assert!(emulator.update()?);
+        assert!(emulator.screen().selection.iter().all(Option::is_none));
+        assert_eq!(emulator.selected_text()?.as_deref(), Some("first word"));
+        emulator.scroll_to_row(0);
+        assert!(emulator.update()?);
+        assert_eq!(emulator.screen().selection.first(), Some(&Some(0..=9)));
+
+        emulator.scroll_to_bottom();
+        emulator.start_selection([1.9, 0.0], 1)?;
+        emulator.scroll_to_row(0);
+        emulator.drag_selection([0.1, 0.0])?;
+        emulator.finish_selection()?;
+        assert_eq!(emulator.selected_text()?.as_deref(), Some("first word\nse"));
+        Ok(())
+    }
+
+    #[test]
+    fn copy_preserves_selected_blank_rows() -> Result<(), VtError> {
+        let mut emulator = emulator();
+        emulator.feed("one\r\n    \r\ntwo\u{2003} ".as_bytes());
+        emulator.start_selection([0.1, 0.0], 1)?;
+        emulator.drag_selection([19.9, 2.0])?;
+        assert_eq!(emulator.selected_text()?.as_deref(), Some("one\n\ntwo"));
+        emulator.clear_selection()?;
+
+        emulator.feed(b"\r\n    ");
+        emulator.start_selection([0.1, 1.0], 1)?;
+        emulator.drag_selection([19.9, 2.0])?;
+        assert_eq!(emulator.selected_text()?.as_deref(), Some("two\n"));
+        Ok(())
+    }
+
+    #[test]
+    fn selects_live_and_history_rows_from_a_rex_snapshot() -> Result<(), VtError> {
+        let mut original = emulator();
+        original.feed(b"history\r\nactive\r\nlast\r\n");
+        let bytes = snapshot::encode(&original.terminal)?;
+        let mut restored = Emulator::from_snapshot(&bytes)?;
+        restored.start_selection([0.1, 0.0], 2)?;
+        assert_eq!(restored.selected_text()?.as_deref(), Some("active"));
+        restored.finish_selection()?;
+        restored.scroll_to_row(0);
+        restored.start_selection([0.1, 0.0], 1)?;
+        restored.drag_selection([19.9, 1.0])?;
+        assert_eq!(
+            restored.selected_text()?.as_deref(),
+            Some("history\nactive")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn encodes_mouse_press_drag_release_and_wheel_in_program_mode() -> Result<(), VtError> {
+        use ghostty_vt::mouse::{Action, Button, Position};
+
+        let mut emulator = emulator();
+        assert!(!emulator.is_mouse_tracking());
+        emulator.feed(b"\x1b[?1002h\x1b[?1006h");
+        assert!(emulator.is_mouse_tracking());
+        for (action, button, x, expected) in [
+            (Action::Press, Button::Left, 1.5, b"\x1b[<0;2;3M".as_slice()),
+            (
+                Action::Motion,
+                Button::Left,
+                2.25,
+                b"\x1b[<32;3;3M".as_slice(),
+            ),
+            (
+                Action::Release,
+                Button::Left,
+                2.25,
+                b"\x1b[<0;3;3m".as_slice(),
+            ),
+            (
+                Action::Press,
+                Button::Four,
+                1.5,
+                b"\x1b[<64;2;3M".as_slice(),
+            ),
+        ] {
+            assert_eq!(
+                emulator.encode_mouse(
+                    action,
+                    Some(button),
+                    key::Mods::empty(),
+                    Position { x, y: 2.25 },
+                )?,
+                expected
+            );
+        }
+        Ok(())
     }
 }

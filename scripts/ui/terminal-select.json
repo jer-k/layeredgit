@@ -1,0 +1,24 @@
+{
+  "events": [
+    {"t": 0.2, "type": "key", "name": "t", "cmd": true},
+    {"t": 1.0, "type": "type", "text": "seq 1 200"},
+    {"t": 2.0, "type": "key", "name": "Enter"},
+    {"t": 2.8, "type": "drag", "x": 17, "y": 621, "dx": 21, "dy": 60, "dur": 0.35},
+    {"t": 3.25, "type": "mark", "name": "multiline"},
+    {"t": 3.3, "type": "key", "name": "c", "cmd": true},
+    {"t": 3.5, "type": "double-click", "x": 27, "y": 721},
+    {"t": 3.85, "type": "mark", "name": "word"},
+    {"t": 3.9, "type": "key", "name": "c", "cmd": true},
+    {"t": 4.1, "type": "secondary-click", "x": 27, "y": 721},
+    {"t": 4.25, "type": "menu-pick", "id": "copy"},
+    {"t": 4.45, "type": "triple-click", "x": 24, "y": 741},
+    {"t": 4.9, "type": "mark", "name": "line"},
+    {"t": 5.0, "type": "down", "x": 38, "y": 641},
+    {"t": 5.1, "type": "move", "x": 17, "y": 569},
+    {"t": 5.4, "type": "up", "x": 17, "y": 569},
+    {"t": 5.5, "type": "mark", "name": "autoscroll"},
+    {"t": 5.55, "type": "key", "name": "c", "cmd": true},
+    {"t": 5.7, "type": "type", "text": "echo selected"},
+    {"t": 6.0, "type": "mark", "name": "cleared"}
+  ]
+}

@@ -7,7 +7,7 @@ mod screen;
 mod source;
 
 pub use emulator::Emulator;
-pub use ghostty_vt::{Error as VtError, key, render::CursorVisualStyle, style::RgbColor};
+pub use ghostty_vt::{Error as VtError, key, mouse, render::CursorVisualStyle, style::RgbColor};
 pub use pty::LocalPty;
 pub use rex::RexPty;
 pub use screen::{Cell, Cursor, Row, Screen};
