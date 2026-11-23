@@ -1,0 +1,12 @@
+{
+  "events": [
+    {"t": 0.2, "type": "key", "name": "t", "cmd": true},
+    {"t": 1.0, "type": "type", "text": "seq 1 200"},
+    {"t": 2.0, "type": "key", "name": "Enter"},
+    {"t": 2.8, "type": "mark", "name": "bottom"},
+    {"t": 3.0, "type": "scroll", "key": "terminal-screen", "dy": 200, "dur": 0.2},
+    {"t": 3.6, "type": "mark", "name": "scrolled-up"},
+    {"t": 3.8, "type": "scroll", "key": "terminal-screen", "dy": -100, "dur": 0.2},
+    {"t": 4.4, "type": "mark", "name": "scrolled-down"}
+  ]
+}

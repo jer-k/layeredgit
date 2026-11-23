@@ -572,7 +572,8 @@ impl State {
     pub(crate) fn terminal_scroll(&mut self, dy: f32, tx: &mut Tx) -> bool {
         let pane_rows = self.terminal.pane_rows();
         if let Some(session) = &mut self.terminal.session {
-            self.terminal.wheel_remainder += dy / CELL_HEIGHT;
+            // Rune's dy is positive when content should move down, which reveals older rows.
+            self.terminal.wheel_remainder -= dy / CELL_HEIGHT;
             #[expect(
                 clippy::cast_possible_truncation,
                 reason = "Keep only whole rows; retain the remainder"
